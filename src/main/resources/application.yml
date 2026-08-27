@@ -1,0 +1,13 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: birchat-backend
+
+  profiles:
+    active: local
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
