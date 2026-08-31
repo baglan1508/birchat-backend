@@ -1,0 +1,22 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        default_schema: birchat
+        format_sql: false
+
+  flyway:
+    enabled: true
+    schemas: birchat
+    default-schema: birchat
+    locations: classpath:db/migration
+    baseline-on-migrate: true
