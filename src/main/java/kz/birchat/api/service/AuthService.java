@@ -6,6 +6,7 @@ import kz.birchat.api.dto.SendCodeResponse;
 import kz.birchat.api.dto.VerifyCodeRequest;
 import kz.birchat.api.entity.UserEntity;
 import kz.birchat.api.repository.UserRepository;
+import kz.birchat.api.util.PhoneUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,20 +23,23 @@ public class AuthService {
     private final UserRepository userRepository;
 
     public SendCodeResponse sendCode(SendCodeRequest request) {
+        String phone = PhoneUtils.normalize(request.phone());
+
         return new SendCodeResponse(
-                "Код подтверждения отправлен. Для теста используйте код 1111",
+                "Код подтверждения отправлен на номер " + phone,
                 MOCK_CODE
         );
     }
 
     @Transactional
     public AuthResponse verifyCode(VerifyCodeRequest request) {
+        String phone = PhoneUtils.normalize(request.phone());
         if (!MOCK_CODE.equals(request.code())) {
             throw new IllegalArgumentException("Неверный код подтверждения");
         }
 
-        UserEntity user = userRepository.findByPhone(request.phone())
-                .orElseGet(() -> createUser(request.phone()));
+        UserEntity user = userRepository.findByPhone(phone)
+                .orElseGet(() -> createUser(phone));
 
         return new AuthResponse(
                 user.getId(),
