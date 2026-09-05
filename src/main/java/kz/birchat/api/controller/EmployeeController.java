@@ -20,9 +20,10 @@ public class EmployeeController {
 
     @GetMapping
     public List<EmployeeResponse> getEmployees(
-            @PathVariable UUID companyId
+            @PathVariable UUID companyId,
+            @RequestParam UUID userId
     ) {
-        return employeeService.getEmployees(companyId);
+        return employeeService.getEmployees(companyId, userId);
     }
 
     @PostMapping

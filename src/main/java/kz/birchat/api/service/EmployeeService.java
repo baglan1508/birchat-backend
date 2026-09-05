@@ -32,9 +32,10 @@ public class EmployeeService {
     private final CompanyMemberRepository companyMemberRepository;
 
     @Transactional(readOnly = true)
-    public List<EmployeeResponse> getEmployees(UUID companyId) {
-        return companyMemberRepository
-                .findByCompanyIdAndStatusOrderByJoinedAtAsc(companyId, "ACTIVE")
+    public List<EmployeeResponse> getEmployees(UUID companyId, UUID userId) {
+        checkActiveMember(companyId, userId);
+
+        return companyMemberRepository.findByCompanyIdAndStatusOrderByJoinedAtAsc(companyId, "ACTIVE")
                 .stream()
                 .map(this::toResponse)
                 .toList();
@@ -168,5 +169,25 @@ public class EmployeeService {
         return "Новый пользователь".equals(user.getFullName())
                 || "Пользователь".equals(user.getDisplayName())
                 || "П".equals(user.getInitials());
+    }
+    private void checkActiveMember(UUID companyId, UUID userId) {
+        if (userId == null) {
+            throw ApiException.badRequest(
+                    ApiErrorCode.VALIDATION,
+                    "userId обязателен"
+            );
+        }
+
+        companyRepository.findById(companyId)
+                .orElseThrow(() -> ApiException.notFound(
+                        ApiErrorCode.COMPANY_NOT_FOUND,
+                        "Компания не найдена"
+                ));
+
+        companyMemberRepository.findByCompanyIdAndUserIdAndStatus(companyId, userId, "ACTIVE")
+                .orElseThrow(() -> ApiException.forbidden(
+                        ApiErrorCode.NOT_A_MEMBER,
+                        "Пользователь не состоит в этой компании"
+                ));
     }
 }

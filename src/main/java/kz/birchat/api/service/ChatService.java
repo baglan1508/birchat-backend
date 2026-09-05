@@ -1,5 +1,6 @@
 package kz.birchat.api.service;
 
+import kz.birchat.api.repository.*;
 import org.springframework.transaction.annotation.Transactional;
 import kz.birchat.api.dto.ChatMessageResponse;
 import kz.birchat.api.dto.CreateChatMessageRequest;
@@ -8,10 +9,6 @@ import kz.birchat.api.entity.ChatMessageEntity;
 import kz.birchat.api.entity.CompanyEntity;
 import kz.birchat.api.entity.UserEntity;
 import kz.birchat.api.enums.ChatMessageType;
-import kz.birchat.api.repository.ChatMessageRepository;
-import kz.birchat.api.repository.ChatRepository;
-import kz.birchat.api.repository.CompanyRepository;
-import kz.birchat.api.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import kz.birchat.api.exception.ApiErrorCode;
@@ -31,6 +28,7 @@ public class ChatService {
     private final CompanyRepository companyRepository;
     private final ChatRepository chatRepository;
     private final UserRepository userRepository;
+    private final CompanyMemberRepository companyMemberRepository;
 
     @Transactional(readOnly = true)
     public List<ChatMessageResponse> getGeneralChatMessages(UUID companyId) {
@@ -42,11 +40,17 @@ public class ChatService {
     @Transactional(readOnly = true)
     public List<ChatMessageResponse> getGeneralChatMessages(
             UUID companyId,
+            UUID userId,
             UUID after,
             Integer limit
     ) {
+        checkActiveMember(companyId, userId);
+
         if (after == null && limit == null) {
-            return getGeneralChatMessages(companyId);
+            return chatMessageRepository.findGeneralChatMessages(companyId)
+                    .stream()
+                    .map(this::toResponse)
+                    .toList();
         }
 
         int safeLimit = normalizeLimit(limit);
@@ -104,6 +108,7 @@ public class ChatService {
             UUID companyId,
             CreateChatMessageRequest request
     ) {
+        checkActiveMember(companyId, request.userId());
         CompanyEntity company = companyRepository.findById(companyId)
                 .orElseThrow(() -> new IllegalArgumentException("Компания не найдена: " + companyId));
 
@@ -141,5 +146,30 @@ public class ChatService {
                 message.getContent(),
                 TimeUtils.toUtcOffset(message.getCreatedAt())
         );
+    }
+    private void checkActiveMember(UUID companyId, UUID userId) {
+        if (userId == null) {
+            throw ApiException.badRequest(
+                    ApiErrorCode.VALIDATION,
+                    "userId обязателен"
+            );
+        }
+
+        companyRepository.findById(companyId)
+                .orElseThrow(() -> ApiException.notFound(
+                        ApiErrorCode.COMPANY_NOT_FOUND,
+                        "Компания не найдена"
+                ));
+
+        boolean isMember = companyMemberRepository
+                .findByCompanyIdAndUserIdAndStatus(companyId, userId, "ACTIVE")
+                .isPresent();
+
+        if (!isMember) {
+            throw ApiException.forbidden(
+                    ApiErrorCode.NOT_A_MEMBER,
+                    "Пользователь не состоит в этой компании"
+            );
+        }
     }
 }
