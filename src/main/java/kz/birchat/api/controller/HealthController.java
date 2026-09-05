@@ -1,9 +1,9 @@
 package kz.birchat.api.controller;
 
+import kz.birchat.api.util.TimeUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.LocalDateTime;
 import java.util.Map;
 
 @RestController
@@ -14,7 +14,7 @@ public class HealthController {
         return Map.of(
                 "status", "UP",
                 "service", "birchat-backend",
-                "time", LocalDateTime.now()
+                "time", TimeUtils.utcOffsetNow()
         );
     }
 }

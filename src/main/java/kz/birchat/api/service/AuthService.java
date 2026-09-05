@@ -9,6 +9,7 @@ import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
 import kz.birchat.api.repository.UserRepository;
 import kz.birchat.api.util.PhoneUtils;
+import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -57,7 +58,7 @@ public class AuthService {
     }
 
     private UserEntity createUser(String phone) {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = TimeUtils.utcNow();
 
         UserEntity user = new UserEntity();
         user.setId(UUID.randomUUID());

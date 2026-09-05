@@ -1,6 +1,6 @@
 package kz.birchat.api.dto;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record ChatMessageResponse(
@@ -10,6 +10,6 @@ public record ChatMessageResponse(
         String authorInitials,
         String type,
         String text,
-        LocalDateTime createdAt
+        OffsetDateTime createdAt
 ) {
 }

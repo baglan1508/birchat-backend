@@ -1,6 +1,6 @@
 package kz.birchat.api.dto;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record EmployeeResponse(
@@ -15,6 +15,6 @@ public record EmployeeResponse(
         String roleLabel,
         String position,
         String status,
-        LocalDateTime joinedAt
+        OffsetDateTime joinedAt
 ) {
 }

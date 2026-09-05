@@ -15,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import kz.birchat.api.util.TimeUtils;
 import java.util.List;
 import java.util.UUID;
 
@@ -47,7 +48,7 @@ public class ChatService {
         UserEntity user = userRepository.findById(request.userId())
                 .orElseThrow(() -> new IllegalArgumentException("Пользователь не найден: " + request.userId()));
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = TimeUtils.utcNow();
 
         ChatMessageEntity message = new ChatMessageEntity();
         message.setId(UUID.randomUUID());
@@ -73,7 +74,7 @@ public class ChatService {
                 message.getUser().getInitials(),
                 message.getType().name(),
                 message.getContent(),
-                message.getCreatedAt()
+                TimeUtils.toUtcOffset(message.getCreatedAt())
         );
     }
 }

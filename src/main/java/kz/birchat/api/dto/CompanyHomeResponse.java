@@ -1,6 +1,7 @@
 package kz.birchat.api.dto;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record CompanyHomeResponse(
@@ -23,7 +24,7 @@ public record CompanyHomeResponse(
             String name,
             Long messagesCount,
             String lastMessage,
-            LocalDateTime lastMessageAt
+            OffsetDateTime lastMessageAt
     ) {
     }
 

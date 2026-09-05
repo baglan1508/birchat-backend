@@ -13,6 +13,7 @@ import kz.birchat.api.repository.CompanyRepository;
 import kz.birchat.api.repository.RoleRepository;
 import kz.birchat.api.repository.UserRepository;
 import kz.birchat.api.util.PhoneUtils;
+import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -106,7 +107,7 @@ public class EmployeeService {
     }
 
     private UserEntity createUser(String phone, String fullName) {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = TimeUtils.utcNow();
 
         UserEntity user = new UserEntity();
         user.setId(UUID.randomUUID());
@@ -138,7 +139,7 @@ public class EmployeeService {
                 role.getName(),
                 member.getPosition(),
                 member.getStatus(),
-                member.getJoinedAt()
+                TimeUtils.toUtcOffset(member.getJoinedAt())
         );
     }
 

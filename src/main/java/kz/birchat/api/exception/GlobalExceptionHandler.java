@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
-import java.time.LocalDateTime;
+import kz.birchat.api.util.TimeUtils;
 import java.util.stream.Collectors;
 
 @RestControllerAdvice
@@ -22,7 +22,7 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         ErrorResponse response = new ErrorResponse(
-                LocalDateTime.now(),
+                TimeUtils.utcOffsetNow(),
                 ex.getStatus().value(),
                 ex.getStatus().name(),
                 ex.getCode().name(),
@@ -47,7 +47,7 @@ public class GlobalExceptionHandler {
                 .collect(Collectors.joining("; "));
 
         ErrorResponse response = new ErrorResponse(
-                LocalDateTime.now(),
+                TimeUtils.utcOffsetNow(),
                 HttpStatus.BAD_REQUEST.value(),
                 HttpStatus.BAD_REQUEST.name(),
                 ApiErrorCode.VALIDATION.name(),
@@ -66,7 +66,7 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         ErrorResponse response = new ErrorResponse(
-                LocalDateTime.now(),
+                TimeUtils.utcOffsetNow(),
                 HttpStatus.BAD_REQUEST.value(),
                 HttpStatus.BAD_REQUEST.name(),
                 ApiErrorCode.VALIDATION.name(),
@@ -85,7 +85,7 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         ErrorResponse response = new ErrorResponse(
-                LocalDateTime.now(),
+                TimeUtils.utcOffsetNow(),
                 HttpStatus.BAD_REQUEST.value(),
                 HttpStatus.BAD_REQUEST.name(),
                 ApiErrorCode.VALIDATION.name(),
@@ -104,7 +104,7 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         ErrorResponse response = new ErrorResponse(
-                LocalDateTime.now(),
+                TimeUtils.utcOffsetNow(),
                 HttpStatus.BAD_REQUEST.value(),
                 HttpStatus.BAD_REQUEST.name(),
                 ApiErrorCode.BAD_REQUEST.name(),
@@ -123,7 +123,7 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         ErrorResponse response = new ErrorResponse(
-                LocalDateTime.now(),
+                TimeUtils.utcOffsetNow(),
                 HttpStatus.INTERNAL_SERVER_ERROR.value(),
                 HttpStatus.INTERNAL_SERVER_ERROR.name(),
                 ApiErrorCode.INTERNAL_ERROR.name(),

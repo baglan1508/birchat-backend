@@ -7,12 +7,14 @@ import kz.birchat.api.entity.*;
 import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
 import kz.birchat.api.repository.*;
+import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -63,12 +65,12 @@ public class CompanyService {
         );
 
         String lastMessage = null;
-        LocalDateTime lastMessageAt = null;
+        OffsetDateTime lastMessageAt = null;
 
         if (!lastMessages.isEmpty()) {
             ChatMessageEntity message = lastMessages.get(0);
             lastMessage = message.getContent();
-            lastMessageAt = message.getCreatedAt();
+            lastMessageAt = TimeUtils.toUtcOffset(message.getCreatedAt());
         }
 
         boolean aiDirectorAvailable = "DIRECTOR".equals(member.getRole().getCode());
@@ -106,7 +108,7 @@ public class CompanyService {
         RoleEntity directorRole = roleRepository.findByCode("DIRECTOR")
                 .orElseThrow(() -> new IllegalArgumentException("Роль DIRECTOR не найдена"));
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = TimeUtils.utcNow();
 
         CompanyEntity company = new CompanyEntity();
         company.setId(UUID.randomUUID());
