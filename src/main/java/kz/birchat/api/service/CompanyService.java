@@ -4,6 +4,8 @@ import kz.birchat.api.dto.CompanyHomeResponse;
 import kz.birchat.api.dto.CompanyResponse;
 import kz.birchat.api.dto.CreateCompanyRequest;
 import kz.birchat.api.entity.*;
+import kz.birchat.api.exception.ApiErrorCode;
+import kz.birchat.api.exception.ApiException;
 import kz.birchat.api.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -39,11 +41,16 @@ public class CompanyService {
     public CompanyHomeResponse getCompanyHome(UUID companyId, UUID userId) {
         CompanyMemberEntity member = companyMemberRepository
                 .findByCompanyIdAndUserIdAndStatus(companyId, userId, "ACTIVE")
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "Пользователь не состоит в компании или не активен"
+                .orElseThrow(() -> ApiException.forbidden(
+                        ApiErrorCode.NOT_A_MEMBER,
+                        "Пользователь не состоит в этой компании"
                 ));
 
-        CompanyEntity company = member.getCompany();
+        CompanyEntity company = companyRepository.findById(companyId)
+                .orElseThrow(() -> ApiException.notFound(
+                        ApiErrorCode.COMPANY_NOT_FOUND,
+                        "Компания не найдена"
+                ));
 
         ChatEntity generalChat = chatRepository.findByCompanyIdAndType(companyId, "GENERAL")
                 .orElseThrow(() -> new IllegalArgumentException("Общий чат компании не найден"));

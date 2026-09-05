@@ -3,6 +3,8 @@ package kz.birchat.api.service;
 import kz.birchat.api.dto.UpdateUserRequest;
 import kz.birchat.api.dto.UserResponse;
 import kz.birchat.api.entity.UserEntity;
+import kz.birchat.api.exception.ApiErrorCode;
+import kz.birchat.api.exception.ApiException;
 import kz.birchat.api.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -46,7 +48,10 @@ public class UserService {
         }
 
         return userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("Пользователь не найден"));
+                .orElseThrow(() -> ApiException.notFound(
+                        ApiErrorCode.USER_NOT_FOUND,
+                        "Пользователь не найден"
+                ));
     }
 
     private UserResponse toResponse(UserEntity user) {

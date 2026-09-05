@@ -6,6 +6,8 @@ import kz.birchat.api.entity.CompanyEntity;
 import kz.birchat.api.entity.CompanyMemberEntity;
 import kz.birchat.api.entity.RoleEntity;
 import kz.birchat.api.entity.UserEntity;
+import kz.birchat.api.exception.ApiErrorCode;
+import kz.birchat.api.exception.ApiException;
 import kz.birchat.api.repository.CompanyMemberRepository;
 import kz.birchat.api.repository.CompanyRepository;
 import kz.birchat.api.repository.RoleRepository;
@@ -54,7 +56,18 @@ public class EmployeeService {
                 .orElseThrow(() -> new IllegalArgumentException("Компания не найдена: " + companyId));
 
         RoleEntity role = roleRepository.findByCode(request.roleCode())
-                .orElseThrow(() -> new IllegalArgumentException("Роль не найдена: " + request.roleCode()));
+                .orElseThrow(() -> ApiException.badRequest(
+                        ApiErrorCode.ROLE_NOT_FOUND,
+                        "Роль не найдена"
+                ));
+
+        if (!"DIRECTOR".equals(actorMember.getRole().getCode())
+                && !"ADMIN".equals(actorMember.getRole().getCode())) {
+            throw ApiException.forbidden(
+                    ApiErrorCode.FORBIDDEN,
+                    "Недостаточно прав"
+            );
+        }
 
         UserEntity user = userRepository.findByPhone(phone)
                 .map(existingUser -> {
@@ -72,7 +85,10 @@ public class EmployeeService {
                 .orElseGet(() -> createUser(phone, request.fullName()));
 
         if (companyMemberRepository.existsByCompanyIdAndUserIdAndStatus(companyId, user.getId(), "ACTIVE")) {
-            throw new IllegalArgumentException("Пользователь уже состоит в этой компании");
+            throw ApiException.conflict(
+                    ApiErrorCode.ALREADY_MEMBER,
+                    "Пользователь уже состоит в этой компании"
+            );
         }
 
         CompanyMemberEntity member = new CompanyMemberEntity();

@@ -5,6 +5,8 @@ import kz.birchat.api.dto.SendCodeRequest;
 import kz.birchat.api.dto.SendCodeResponse;
 import kz.birchat.api.dto.VerifyCodeRequest;
 import kz.birchat.api.entity.UserEntity;
+import kz.birchat.api.exception.ApiErrorCode;
+import kz.birchat.api.exception.ApiException;
 import kz.birchat.api.repository.UserRepository;
 import kz.birchat.api.util.PhoneUtils;
 import lombok.RequiredArgsConstructor;
@@ -35,7 +37,10 @@ public class AuthService {
     public AuthResponse verifyCode(VerifyCodeRequest request) {
         String phone = PhoneUtils.normalize(request.phone());
         if (!MOCK_CODE.equals(request.code())) {
-            throw new IllegalArgumentException("Неверный код подтверждения");
+            throw ApiException.badRequest(
+                    ApiErrorCode.INVALID_CODE,
+                    "Неверный код подтверждения"
+            );
         }
 
         UserEntity user = userRepository.findByPhone(phone)
