@@ -20,9 +20,11 @@ public class ChatController {
 
     @GetMapping("/general/messages")
     public List<ChatMessageResponse> getGeneralChatMessages(
-            @PathVariable UUID companyId
+            @PathVariable UUID companyId,
+            @RequestParam(required = false) UUID after,
+            @RequestParam(required = false) Integer limit
     ) {
-        return chatService.getGeneralChatMessages(companyId);
+        return chatService.getGeneralChatMessages(companyId, after, limit);
     }
 
     @PostMapping("/general/messages")

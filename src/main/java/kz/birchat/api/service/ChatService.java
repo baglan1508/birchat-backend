@@ -1,5 +1,6 @@
 package kz.birchat.api.service;
 
+import org.springframework.transaction.annotation.Transactional;
 import kz.birchat.api.dto.ChatMessageResponse;
 import kz.birchat.api.dto.CreateChatMessageRequest;
 import kz.birchat.api.entity.ChatEntity;
@@ -13,6 +14,9 @@ import kz.birchat.api.repository.CompanyRepository;
 import kz.birchat.api.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import kz.birchat.api.exception.ApiErrorCode;
+import kz.birchat.api.exception.ApiException;
+import org.springframework.data.domain.PageRequest;
 
 import java.time.LocalDateTime;
 import kz.birchat.api.util.TimeUtils;
@@ -28,11 +32,72 @@ public class ChatService {
     private final ChatRepository chatRepository;
     private final UserRepository userRepository;
 
+    @Transactional(readOnly = true)
     public List<ChatMessageResponse> getGeneralChatMessages(UUID companyId) {
         return chatMessageRepository.findGeneralChatMessages(companyId)
                 .stream()
                 .map(this::toResponse)
                 .toList();
+    }
+    @Transactional(readOnly = true)
+    public List<ChatMessageResponse> getGeneralChatMessages(
+            UUID companyId,
+            UUID after,
+            Integer limit
+    ) {
+        if (after == null && limit == null) {
+            return getGeneralChatMessages(companyId);
+        }
+
+        int safeLimit = normalizeLimit(limit);
+
+        LocalDateTime afterCreatedAt = null;
+
+        if (after != null) {
+            ChatMessageEntity afterMessage = chatMessageRepository.findById(after)
+                    .filter(message -> companyId.equals(message.getCompany().getId()))
+                    .filter(message -> "GENERAL".equals(message.getChat().getType()))
+                    .orElseThrow(() -> ApiException.notFound(
+                            ApiErrorCode.MESSAGE_NOT_FOUND,
+                            "Сообщение after не найдено"
+                    ));
+
+            afterCreatedAt = afterMessage.getCreatedAt();
+        }
+
+        List<ChatMessageEntity> messages;
+
+        if (afterCreatedAt == null) {
+            messages = chatMessageRepository.findGeneralChatMessagesPaged(
+                    companyId,
+                    PageRequest.of(0, safeLimit)
+            );
+        } else {
+            messages = chatMessageRepository.findGeneralChatMessagesAfter(
+                    companyId,
+                    afterCreatedAt,
+                    PageRequest.of(0, safeLimit)
+            );
+        }
+
+        return messages.stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    private int normalizeLimit(Integer limit) {
+        if (limit == null) {
+            return 50;
+        }
+
+        if (limit < 1) {
+            throw ApiException.badRequest(
+                    ApiErrorCode.VALIDATION,
+                    "limit должен быть больше 0"
+            );
+        }
+
+        return Math.min(limit, 100);
     }
 
     public ChatMessageResponse createGeneralChatMessage(

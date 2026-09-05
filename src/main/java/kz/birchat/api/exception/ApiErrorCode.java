@@ -5,6 +5,7 @@ public enum ApiErrorCode {
     USER_NOT_FOUND,
     COMPANY_NOT_FOUND,
     CHAT_NOT_FOUND,
+    MESSAGE_NOT_FOUND,
     ROLE_NOT_FOUND,
     NOT_A_MEMBER,
     FORBIDDEN,
