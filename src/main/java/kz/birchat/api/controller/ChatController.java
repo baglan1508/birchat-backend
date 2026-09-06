@@ -23,9 +23,10 @@ public class ChatController {
             @PathVariable UUID companyId,
             @RequestParam UUID userId,
             @RequestParam(required = false) UUID after,
+            @RequestParam(required = false) UUID before,
             @RequestParam(required = false) Integer limit
     ) {
-        return chatService.getGeneralChatMessages(companyId, userId, after, limit);
+        return chatService.getGeneralChatMessages(companyId, userId, after, before, limit);
     }
     @PostMapping("/general/messages")
     @ResponseStatus(HttpStatus.CREATED)

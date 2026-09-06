@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
 import kz.birchat.api.util.TimeUtils;
 import java.util.List;
 import java.util.UUID;
+import java.util.Collections;
 
 @Service
 @RequiredArgsConstructor
@@ -42,46 +43,45 @@ public class ChatService {
             UUID companyId,
             UUID userId,
             UUID after,
+            UUID before,
             Integer limit
     ) {
         checkActiveMember(companyId, userId);
 
-        if (after == null && limit == null) {
-            return chatMessageRepository.findGeneralChatMessages(companyId)
-                    .stream()
-                    .map(this::toResponse)
-                    .toList();
+        if (after != null && before != null) {
+            throw ApiException.badRequest(
+                    ApiErrorCode.VALIDATION,
+                    "Нельзя одновременно использовать after и before"
+            );
         }
 
         int safeLimit = normalizeLimit(limit);
 
-        LocalDateTime afterCreatedAt = null;
-
-        if (after != null) {
-            ChatMessageEntity afterMessage = chatMessageRepository.findById(after)
-                    .filter(message -> companyId.equals(message.getCompany().getId()))
-                    .filter(message -> "GENERAL".equals(message.getChat().getType()))
-                    .orElseThrow(() -> ApiException.notFound(
-                            ApiErrorCode.MESSAGE_NOT_FOUND,
-                            "Сообщение after не найдено"
-                    ));
-
-            afterCreatedAt = afterMessage.getCreatedAt();
-        }
-
         List<ChatMessageEntity> messages;
 
-        if (afterCreatedAt == null) {
-            messages = chatMessageRepository.findGeneralChatMessagesPaged(
-                    companyId,
-                    PageRequest.of(0, safeLimit)
-            );
-        } else {
+        if (after != null) {
+            ChatMessageEntity afterMessage = findMessageCursor(companyId, after, "after");
             messages = chatMessageRepository.findGeneralChatMessagesAfter(
                     companyId,
-                    afterCreatedAt,
+                    afterMessage.getCreatedAt(),
                     PageRequest.of(0, safeLimit)
             );
+        } else if (before != null) {
+            ChatMessageEntity beforeMessage = findMessageCursor(companyId, before, "before");
+            messages = chatMessageRepository.findGeneralChatMessagesBefore(
+                    companyId,
+                    beforeMessage.getCreatedAt(),
+                    PageRequest.of(0, safeLimit)
+            );
+
+            Collections.reverse(messages);
+        } else {
+            messages = chatMessageRepository.findLatestGeneralChatMessages(
+                    companyId,
+                    PageRequest.of(0, safeLimit)
+            );
+
+            Collections.reverse(messages);
         }
 
         return messages.stream()
@@ -171,5 +171,14 @@ public class ChatService {
                     "Пользователь не состоит в этой компании"
             );
         }
+    }
+    private ChatMessageEntity findMessageCursor(UUID companyId, UUID messageId, String cursorName) {
+        return chatMessageRepository.findById(messageId)
+                .filter(message -> companyId.equals(message.getCompany().getId()))
+                .filter(message -> "GENERAL".equals(message.getChat().getType()))
+                .orElseThrow(() -> ApiException.notFound(
+                        ApiErrorCode.MESSAGE_NOT_FOUND,
+                        "Сообщение " + cursorName + " не найдено"
+                ));
     }
 }

@@ -5,7 +5,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -56,9 +55,24 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
         WHERE m.company.id = :companyId
           AND ch.type = 'GENERAL'
           AND m.isDeleted = false
+          AND m.createdAt > :afterCreatedAt
         ORDER BY m.createdAt ASC
         """)
-    List<ChatMessageEntity> findGeneralChatMessagesPaged(
+    List<ChatMessageEntity> findGeneralChatMessagesAfter(
+            @Param("companyId") UUID companyId,
+            @Param("afterCreatedAt") LocalDateTime afterCreatedAt,
+            Pageable pageable
+    );
+    @Query("""
+        SELECT m FROM ChatMessageEntity m
+        JOIN FETCH m.user u
+        JOIN FETCH m.chat ch
+        WHERE m.company.id = :companyId
+          AND ch.type = 'GENERAL'
+          AND m.isDeleted = false
+        ORDER BY m.createdAt DESC
+        """)
+    List<ChatMessageEntity> findLatestGeneralChatMessages(
             @Param("companyId") UUID companyId,
             Pageable pageable
     );
@@ -70,12 +84,12 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
         WHERE m.company.id = :companyId
           AND ch.type = 'GENERAL'
           AND m.isDeleted = false
-          AND m.createdAt > :afterCreatedAt
-        ORDER BY m.createdAt ASC
+          AND m.createdAt < :beforeCreatedAt
+        ORDER BY m.createdAt DESC
         """)
-    List<ChatMessageEntity> findGeneralChatMessagesAfter(
+    List<ChatMessageEntity> findGeneralChatMessagesBefore(
             @Param("companyId") UUID companyId,
-            @Param("afterCreatedAt") LocalDateTime afterCreatedAt,
+            @Param("beforeCreatedAt") LocalDateTime beforeCreatedAt,
             Pageable pageable
     );
 }
