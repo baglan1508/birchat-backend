@@ -18,12 +18,20 @@ import kz.birchat.api.dto.ChatReadStateResponse;
 import kz.birchat.api.dto.MarkChatReadRequest;
 import kz.birchat.api.entity.ChatReadStateEntity;
 import kz.birchat.api.repository.ChatReadStateRepository;
+import kz.birchat.api.repository.CompanyFileRepository;
+import kz.birchat.api.dto.ChatAttachmentResponse;
+import kz.birchat.api.dto.CreateFileMessageRequest;
+import kz.birchat.api.entity.ChatAttachmentEntity;
+import kz.birchat.api.entity.CompanyFileEntity;
+import kz.birchat.api.repository.ChatAttachmentRepository;
 
 import java.time.LocalDateTime;
 import kz.birchat.api.util.TimeUtils;
 import java.util.List;
 import java.util.UUID;
 import java.util.Collections;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -35,14 +43,9 @@ public class ChatService {
     private final UserRepository userRepository;
     private final CompanyMemberRepository companyMemberRepository;
     private final ChatReadStateRepository chatReadStateRepository;
+    private final CompanyFileRepository companyFileRepository;
+    private final ChatAttachmentRepository chatAttachmentRepository;
 
-    @Transactional(readOnly = true)
-    public List<ChatMessageResponse> getGeneralChatMessages(UUID companyId) {
-        return chatMessageRepository.findGeneralChatMessages(companyId)
-                .stream()
-                .map(this::toResponse)
-                .toList();
-    }
     @Transactional(readOnly = true)
     public List<ChatMessageResponse> getGeneralChatMessages(
             UUID companyId,
@@ -97,9 +100,7 @@ public class ChatService {
             Collections.reverse(messages);
         }
 
-        return messages.stream()
-                .map(this::toResponse)
-                .toList();
+        return toResponses(messages);
     }
 
     private int normalizeLimit(Integer limit) {
@@ -146,20 +147,9 @@ public class ChatService {
 
         ChatMessageEntity savedMessage = chatMessageRepository.save(message);
 
-        return toResponse(savedMessage);
+        return toResponse(savedMessage, List.of());
     }
 
-    private ChatMessageResponse toResponse(ChatMessageEntity message) {
-        return new ChatMessageResponse(
-                message.getId(),
-                message.getUser().getId(),
-                message.getUser().getDisplayName(),
-                message.getUser().getInitials(),
-                message.getType().name(),
-                message.getContent(),
-                TimeUtils.toUtcOffset(message.getCreatedAt())
-        );
-    }
     private void checkActiveMember(UUID companyId, UUID userId) {
         if (userId == null) {
             throw ApiException.badRequest(
@@ -312,6 +302,142 @@ public class ChatService {
                 userId,
                 state.getLastReadMessageCreatedAt(),
                 state.getLastReadMessage().getId()
+        );
+    }
+
+    @Transactional
+    public ChatMessageResponse createGeneralChatFileMessage(
+            UUID companyId,
+            CreateFileMessageRequest request
+    ) {
+        checkActiveMember(companyId, request.userId());
+
+        CompanyEntity company = companyRepository.findById(companyId)
+                .orElseThrow(() -> ApiException.notFound(
+                        ApiErrorCode.COMPANY_NOT_FOUND,
+                        "Компания не найдена"
+                ));
+
+        ChatEntity chat = findGeneralChat(companyId);
+
+        UserEntity user = userRepository.findById(request.userId())
+                .orElseThrow(() -> ApiException.notFound(
+                        ApiErrorCode.USER_NOT_FOUND,
+                        "Пользователь не найден"
+                ));
+
+        CompanyFileEntity file = companyFileRepository.findById(request.fileId())
+                .filter(item -> companyId.equals(item.getCompany().getId()))
+                .orElseThrow(() -> ApiException.notFound(
+                        ApiErrorCode.FILE_NOT_FOUND,
+                        "Файл не найден"
+                ));
+
+        LocalDateTime now = TimeUtils.utcNow();
+
+        String text = request.text() == null
+                ? ""
+                : request.text().trim();
+
+        ChatMessageEntity message = new ChatMessageEntity();
+        message.setId(UUID.randomUUID());
+        message.setCompany(company);
+        message.setChat(chat);
+        message.setUser(user);
+        message.setType(resolveMessageType(file.getContentType()));
+        message.setContent(text);
+        message.setIsDeleted(false);
+        message.setCreatedAt(now);
+        message.setUpdatedAt(now);
+
+        ChatMessageEntity savedMessage = chatMessageRepository.save(message);
+
+        ChatAttachmentEntity attachment = new ChatAttachmentEntity();
+        attachment.setId(UUID.randomUUID());
+        attachment.setCompany(company);
+        attachment.setChat(chat);
+        attachment.setMessage(savedMessage);
+        attachment.setFile(file);
+        attachment.setCreatedAt(now);
+
+        ChatAttachmentEntity savedAttachment = chatAttachmentRepository.save(attachment);
+
+        return toResponse(
+                savedMessage,
+                List.of(toAttachmentResponse(savedAttachment))
+        );
+    }
+
+    private ChatMessageType resolveMessageType(String contentType) {
+        if (contentType == null || contentType.isBlank()) {
+            return ChatMessageType.DOCUMENT;
+        }
+
+        String value = contentType.toLowerCase();
+
+        if (value.startsWith("image/")) {
+            return ChatMessageType.IMAGE;
+        }
+
+        if (value.startsWith("audio/")) {
+            return ChatMessageType.VOICE;
+        }
+
+        return ChatMessageType.DOCUMENT;
+    }
+
+    private List<ChatMessageResponse> toResponses(List<ChatMessageEntity> messages) {
+        if (messages.isEmpty()) {
+            return List.of();
+        }
+
+        List<UUID> messageIds = messages.stream()
+                .map(ChatMessageEntity::getId)
+                .toList();
+
+        Map<UUID, List<ChatAttachmentResponse>> attachmentsByMessageId =
+                chatAttachmentRepository.findByMessageIds(messageIds)
+                        .stream()
+                        .collect(Collectors.groupingBy(
+                                attachment -> attachment.getMessage().getId(),
+                                Collectors.mapping(this::toAttachmentResponse, Collectors.toList())
+                        ));
+
+        return messages.stream()
+                .map(message -> toResponse(
+                        message,
+                        attachmentsByMessageId.getOrDefault(message.getId(), List.of())
+                ))
+                .toList();
+    }
+
+    private ChatMessageResponse toResponse(
+            ChatMessageEntity message,
+            List<ChatAttachmentResponse> attachments
+    ) {
+        UserEntity user = message.getUser();
+
+        return new ChatMessageResponse(
+                message.getId(),
+                user.getId(),
+                user.getDisplayName(),
+                user.getInitials(),
+                message.getType().name(),
+                message.getContent(),
+                TimeUtils.toUtcOffset(message.getCreatedAt()),
+                attachments
+        );
+    }
+
+    private ChatAttachmentResponse toAttachmentResponse(ChatAttachmentEntity attachment) {
+        CompanyFileEntity file = attachment.getFile();
+
+        return new ChatAttachmentResponse(
+                file.getId(),
+                file.getFileName(),
+                file.getOriginalFileName(),
+                file.getContentType(),
+                file.getFileSize()
         );
     }
 }

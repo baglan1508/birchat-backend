@@ -1,15 +1,13 @@
 package kz.birchat.api.controller;
 
 import jakarta.validation.Valid;
-import kz.birchat.api.dto.ChatMessageResponse;
-import kz.birchat.api.dto.CreateChatMessageRequest;
+import kz.birchat.api.dto.*;
 import kz.birchat.api.service.ChatService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
-import kz.birchat.api.dto.ChatReadStateResponse;
-import kz.birchat.api.dto.MarkChatReadRequest;
+import org.springframework.web.bind.annotation.ResponseStatus;
 
 import java.util.List;
 import java.util.UUID;
@@ -31,6 +29,7 @@ public class ChatController {
     ) {
         return chatService.getGeneralChatMessages(companyId, userId, after, before, limit);
     }
+
     @PostMapping("/general/messages")
     @ResponseStatus(HttpStatus.CREATED)
     public ChatMessageResponse createGeneralChatMessage(
@@ -39,6 +38,7 @@ public class ChatController {
     ) {
         return chatService.createGeneralChatMessage(companyId, request);
     }
+
     @PostMapping("/general/read")
     public ChatReadStateResponse markGeneralChatAsRead(
             @PathVariable UUID companyId,
@@ -46,5 +46,14 @@ public class ChatController {
             @Valid @RequestBody MarkChatReadRequest request
     ) {
         return chatService.markGeneralChatAsRead(companyId, userId, request);
+    }
+
+    @PostMapping("/general/messages/file")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ChatMessageResponse createGeneralChatFileMessage(
+            @PathVariable UUID companyId,
+            @Valid @RequestBody CreateFileMessageRequest request
+    ) {
+        return chatService.createGeneralChatFileMessage(companyId, request);
     }
 }
