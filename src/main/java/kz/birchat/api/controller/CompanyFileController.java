@@ -4,6 +4,11 @@ import kz.birchat.api.dto.CompanyFileResponse;
 import kz.birchat.api.service.CompanyFileService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.multipart.MultipartFile;
+import kz.birchat.api.dto.CompanyFileDownloadUrlResponse;
 
 import java.util.List;
 import java.util.UUID;
@@ -31,5 +36,33 @@ public class CompanyFileController {
             @RequestParam UUID userId
     ) {
         return companyFileService.getCompanyFile(companyId, fileId, userId);
+    }
+
+    @PostMapping(
+            value = "/upload",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE
+    )
+    @ResponseStatus(HttpStatus.CREATED)
+    public CompanyFileResponse uploadFile(
+            @PathVariable UUID companyId,
+            @RequestParam UUID userId,
+            @RequestParam("file") MultipartFile file
+    ) {
+        return companyFileService.uploadFile(companyId, userId, file);
+    }
+
+    @GetMapping("/{fileId}/download-url")
+    public CompanyFileDownloadUrlResponse getDownloadUrl(
+            @PathVariable UUID companyId,
+            @PathVariable UUID fileId,
+            @RequestParam UUID userId,
+            @RequestParam(required = false) Integer expiresInSeconds
+    ) {
+        return companyFileService.getDownloadUrl(
+                companyId,
+                fileId,
+                userId,
+                expiresInSeconds
+        );
     }
 }

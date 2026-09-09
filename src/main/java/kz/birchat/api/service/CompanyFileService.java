@@ -11,7 +11,16 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import kz.birchat.api.dto.StoredFileInfo;
+import kz.birchat.api.entity.CompanyEntity;
+import kz.birchat.api.entity.UserEntity;
+import kz.birchat.api.repository.CompanyRepository;
+import kz.birchat.api.repository.UserRepository;
+import org.springframework.web.multipart.MultipartFile;
+import kz.birchat.api.dto.CompanyFileDownloadUrlResponse;
+import kz.birchat.api.dto.SignedUrlResponse;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -21,6 +30,9 @@ public class CompanyFileService {
 
     private final CompanyFileRepository companyFileRepository;
     private final CompanyMemberRepository companyMemberRepository;
+    private final CompanyRepository companyRepository;
+    private final UserRepository userRepository;
+    private final SupabaseStorageService supabaseStorageService;
 
     @Transactional(readOnly = true)
     public List<CompanyFileResponse> getCompanyFiles(UUID companyId, UUID userId, Integer limit) {
@@ -91,6 +103,76 @@ public class CompanyFileService {
                 file.getFileSize(),
                 file.getFileUrl(),
                 TimeUtils.toUtcOffset(file.getCreatedAt())
+        );
+    }
+    @Transactional
+    public CompanyFileResponse uploadFile(UUID companyId, UUID userId, MultipartFile multipartFile) {
+        checkActiveMember(companyId, userId);
+
+        CompanyEntity company = companyRepository.findById(companyId)
+                .orElseThrow(() -> ApiException.notFound(
+                        ApiErrorCode.COMPANY_NOT_FOUND,
+                        "Компания не найдена"
+                ));
+
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> ApiException.notFound(
+                        ApiErrorCode.USER_NOT_FOUND,
+                        "Пользователь не найден"
+                ));
+
+        StoredFileInfo storedFile = supabaseStorageService.upload(companyId, userId, multipartFile);
+
+        CompanyFileEntity entity = new CompanyFileEntity();
+        entity.setId(UUID.randomUUID());
+        entity.setCompany(company);
+        entity.setUploadedBy(user);
+        entity.setFileName(storedFile.fileName());
+        entity.setOriginalFileName(storedFile.originalFileName());
+        entity.setContentType(storedFile.contentType());
+        entity.setFileSize(storedFile.fileSize());
+        entity.setStorageKey(storedFile.storageKey());
+        entity.setFileUrl(storedFile.fileUrl());
+        entity.setCreatedAt(TimeUtils.utcNow());
+        entity.setUpdatedAt(TimeUtils.utcNow());
+
+        CompanyFileEntity saved = companyFileRepository.save(entity);
+
+        return toResponse(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public CompanyFileDownloadUrlResponse getDownloadUrl(
+            UUID companyId,
+            UUID fileId,
+            UUID userId,
+            Integer expiresInSeconds
+    ) {
+        checkActiveMember(companyId, userId);
+
+        CompanyFileEntity file = companyFileRepository.findById(fileId)
+                .filter(item -> companyId.equals(item.getCompany().getId()))
+                .orElseThrow(() -> ApiException.notFound(
+                        ApiErrorCode.FILE_NOT_FOUND,
+                        "Файл не найден"
+                ));
+
+        SignedUrlResponse signedUrl = supabaseStorageService.createSignedUrl(
+                file.getStorageKey(),
+                expiresInSeconds
+        );
+
+        OffsetDateTime expiresAt = TimeUtils.utcOffsetNow()
+                .plusSeconds(signedUrl.expiresInSeconds());
+
+        return new CompanyFileDownloadUrlResponse(
+                file.getId(),
+                file.getOriginalFileName(),
+                file.getContentType(),
+                file.getFileSize(),
+                signedUrl.signedUrl(),
+                signedUrl.expiresInSeconds(),
+                expiresAt
         );
     }
 }
