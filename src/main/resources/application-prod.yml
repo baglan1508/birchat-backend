@@ -21,8 +21,8 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
 
-  storage:
-    supabase:
-      url: ${SUPABASE_URL}
-      service-key: ${SUPABASE_SERVICE_KEY}
-      bucket: ${SUPABASE_BUCKET:birchat-files}
+storage:
+  supabase:
+    url: ${SUPABASE_URL}
+    service-key: ${SUPABASE_SERVICE_KEY}
+    bucket: ${SUPABASE_BUCKET:birchat-files}
