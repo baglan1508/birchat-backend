@@ -12,5 +12,6 @@ public enum ApiErrorCode {
     ALREADY_MEMBER,
     VALIDATION,
     BAD_REQUEST,
-    INTERNAL_ERROR
+    INTERNAL_ERROR,
+    FILE_NOT_FOUND
 }
