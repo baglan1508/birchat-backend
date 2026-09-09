@@ -25,14 +25,15 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
     List<ChatMessageEntity> findGeneralChatMessages(@Param("companyId") UUID companyId);
 
     @Query("""
-            SELECT COUNT(m)
-            FROM ChatMessageEntity m
-            JOIN m.chat ch
-            WHERE m.company.id = :companyId
-              AND ch.type = 'GENERAL'
-              AND m.isDeleted = false
-            """)
-    Long countGeneralChatMessages(@Param("companyId") UUID companyId);
+        SELECT COUNT(m) FROM ChatMessageEntity m
+        WHERE m.company.id = :companyId
+          AND m.chat.id = :chatId
+          AND m.isDeleted = false
+        """)
+    Long countGeneralChatMessages(
+            @Param("companyId") UUID companyId,
+            @Param("chatId") UUID chatId
+    );
 
     @Query("""
             SELECT m
@@ -53,14 +54,19 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
         JOIN FETCH m.user u
         JOIN FETCH m.chat ch
         WHERE m.company.id = :companyId
-          AND ch.type = 'GENERAL'
+          AND m.chat.id = :chatId
           AND m.isDeleted = false
-          AND m.createdAt > :afterCreatedAt
-        ORDER BY m.createdAt ASC
+          AND (
+                m.createdAt > :afterCreatedAt
+                OR (m.createdAt = :afterCreatedAt AND m.id > :afterId)
+          )
+        ORDER BY m.createdAt ASC, m.id ASC
         """)
     List<ChatMessageEntity> findGeneralChatMessagesAfter(
             @Param("companyId") UUID companyId,
+            @Param("chatId") UUID chatId,
             @Param("afterCreatedAt") LocalDateTime afterCreatedAt,
+            @Param("afterId") UUID afterId,
             Pageable pageable
     );
     @Query("""
@@ -68,12 +74,13 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
         JOIN FETCH m.user u
         JOIN FETCH m.chat ch
         WHERE m.company.id = :companyId
-          AND ch.type = 'GENERAL'
+          AND m.chat.id = :chatId
           AND m.isDeleted = false
-        ORDER BY m.createdAt DESC
+        ORDER BY m.createdAt DESC, m.id DESC
         """)
     List<ChatMessageEntity> findLatestGeneralChatMessages(
             @Param("companyId") UUID companyId,
+            @Param("chatId") UUID chatId,
             Pageable pageable
     );
 
@@ -82,14 +89,49 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
         JOIN FETCH m.user u
         JOIN FETCH m.chat ch
         WHERE m.company.id = :companyId
-          AND ch.type = 'GENERAL'
+          AND m.chat.id = :chatId
           AND m.isDeleted = false
-          AND m.createdAt < :beforeCreatedAt
-        ORDER BY m.createdAt DESC
+          AND (
+                m.createdAt < :beforeCreatedAt
+                OR (m.createdAt = :beforeCreatedAt AND m.id < :beforeId)
+          )
+        ORDER BY m.createdAt DESC, m.id DESC
         """)
     List<ChatMessageEntity> findGeneralChatMessagesBefore(
             @Param("companyId") UUID companyId,
+            @Param("chatId") UUID chatId,
             @Param("beforeCreatedAt") LocalDateTime beforeCreatedAt,
+            @Param("beforeId") UUID beforeId,
             Pageable pageable
+    );
+    @Query("""
+        SELECT COUNT(m) FROM ChatMessageEntity m
+        WHERE m.company.id = :companyId
+          AND m.chat.id = :chatId
+          AND m.isDeleted = false
+          AND m.user.id <> :userId
+        """)
+    Long countUnreadGeneralChatMessagesAll(
+            @Param("companyId") UUID companyId,
+            @Param("chatId") UUID chatId,
+            @Param("userId") UUID userId
+    );
+    @Query("""
+        SELECT COUNT(m) FROM ChatMessageEntity m
+        WHERE m.company.id = :companyId
+          AND m.chat.id = :chatId
+          AND m.isDeleted = false
+          AND m.user.id <> :userId
+          AND (
+                m.createdAt > :lastReadCreatedAt
+                OR (m.createdAt = :lastReadCreatedAt AND m.id > :lastReadMessageId)
+          )
+        """)
+    Long countUnreadGeneralChatMessagesAfter(
+            @Param("companyId") UUID companyId,
+            @Param("chatId") UUID chatId,
+            @Param("userId") UUID userId,
+            @Param("lastReadCreatedAt") LocalDateTime lastReadCreatedAt,
+            @Param("lastReadMessageId") UUID lastReadMessageId
     );
 }

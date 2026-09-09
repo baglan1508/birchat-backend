@@ -7,6 +7,9 @@ import kz.birchat.api.service.ChatService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
+import jakarta.validation.Valid;
+import kz.birchat.api.dto.ChatReadStateResponse;
+import kz.birchat.api.dto.MarkChatReadRequest;
 
 import java.util.List;
 import java.util.UUID;
@@ -35,5 +38,13 @@ public class ChatController {
             @Valid @RequestBody CreateChatMessageRequest request
     ) {
         return chatService.createGeneralChatMessage(companyId, request);
+    }
+    @PostMapping("/general/read")
+    public ChatReadStateResponse markGeneralChatAsRead(
+            @PathVariable UUID companyId,
+            @RequestParam UUID userId,
+            @Valid @RequestBody MarkChatReadRequest request
+    ) {
+        return chatService.markGeneralChatAsRead(companyId, userId, request);
     }
 }

@@ -12,6 +12,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import kz.birchat.api.entity.ChatReadStateEntity;
+import kz.birchat.api.repository.ChatReadStateRepository;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -28,6 +30,7 @@ public class CompanyService {
     private final CompanyMemberRepository companyMemberRepository;
     private final ChatRepository chatRepository;
     private final ChatMessageRepository chatMessageRepository;
+    private final ChatReadStateRepository chatReadStateRepository;
 
     @Transactional(readOnly = true)
     public List<CompanyResponse> getMyCompanies(UUID userId) {
@@ -57,7 +60,34 @@ public class CompanyService {
         ChatEntity generalChat = chatRepository.findByCompanyIdAndType(companyId, "GENERAL")
                 .orElseThrow(() -> new IllegalArgumentException("Общий чат компании не найден"));
 
-        Long messagesCount = chatMessageRepository.countGeneralChatMessages(companyId);
+        Long messagesCount = chatMessageRepository.countGeneralChatMessages(
+                companyId,
+                generalChat.getId()
+        );
+
+        ChatReadStateEntity readState = chatReadStateRepository
+                .findState(companyId, generalChat.getId(), userId)
+                .orElse(null);
+
+        Long unreadCount;
+
+        if (readState == null
+                || readState.getLastReadMessageCreatedAt() == null
+                || readState.getLastReadMessage() == null) {
+            unreadCount = chatMessageRepository.countUnreadGeneralChatMessagesAll(
+                    companyId,
+                    generalChat.getId(),
+                    userId
+            );
+        } else {
+            unreadCount = chatMessageRepository.countUnreadGeneralChatMessagesAfter(
+                    companyId,
+                    generalChat.getId(),
+                    userId,
+                    readState.getLastReadMessageCreatedAt(),
+                    readState.getLastReadMessage().getId()
+            );
+        }
 
         List<ChatMessageEntity> lastMessages = chatMessageRepository.findLastGeneralChatMessage(
                 companyId,
@@ -88,6 +118,7 @@ public class CompanyService {
                         generalChat.getId(),
                         generalChat.getName(),
                         messagesCount,
+                        unreadCount,
                         lastMessage,
                         lastMessageAt
                 ),

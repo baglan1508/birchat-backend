@@ -23,6 +23,7 @@ public record CompanyHomeResponse(
             UUID chatId,
             String name,
             Long messagesCount,
+            Long unreadCount,
             String lastMessage,
             OffsetDateTime lastMessageAt
     ) {
