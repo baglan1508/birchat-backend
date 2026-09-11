@@ -26,3 +26,21 @@ storage:
     url: ${SUPABASE_URL}
     service-key: ${SUPABASE_SERVICE_KEY}
     bucket: ${SUPABASE_BUCKET:birchat-files}
+
+auth:
+  sms:
+    code-ttl-seconds: ${AUTH_SMS_CODE_TTL_SECONDS:300}
+    resend-cooldown-seconds: ${AUTH_SMS_RESEND_COOLDOWN_SECONDS:60}
+    max-attempts: ${AUTH_SMS_MAX_ATTEMPTS:5}
+    demo-phone: ${AUTH_SMS_DEMO_PHONE}
+    demo-code: ${AUTH_SMS_DEMO_CODE}
+    otp-secret: ${AUTH_SMS_OTP_SECRET}
+
+sms:
+  provider: ${SMS_PROVIDER:smsc}
+
+  smsc:
+    login: ${SMSC_LOGIN:}
+    password: ${SMSC_PASSWORD:}
+    api-key: ${SMSC_API_KEY:}
+    sender: ${SMSC_SENDER:}

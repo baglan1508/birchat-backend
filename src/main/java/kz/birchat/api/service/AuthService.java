@@ -5,10 +5,7 @@ import kz.birchat.api.dto.SendCodeRequest;
 import kz.birchat.api.dto.SendCodeResponse;
 import kz.birchat.api.dto.VerifyCodeRequest;
 import kz.birchat.api.entity.UserEntity;
-import kz.birchat.api.exception.ApiErrorCode;
-import kz.birchat.api.exception.ApiException;
 import kz.birchat.api.repository.UserRepository;
-import kz.birchat.api.util.PhoneUtils;
 import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -21,28 +18,23 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AuthService {
 
-    private static final String MOCK_CODE = "1111";
-
     private final UserRepository userRepository;
+    private final SmsCodeService smsCodeService;
 
     public SendCodeResponse sendCode(SendCodeRequest request) {
-        String phone = PhoneUtils.normalize(request.phone());
+        smsCodeService.sendCode(request.phone());
 
         return new SendCodeResponse(
-                "Код подтверждения отправлен на номер " + phone,
-                MOCK_CODE
+                "Код подтверждения отправлен"
         );
     }
 
     @Transactional
     public AuthResponse verifyCode(VerifyCodeRequest request) {
-        String phone = PhoneUtils.normalize(request.phone());
-        if (!MOCK_CODE.equals(request.code())) {
-            throw ApiException.badRequest(
-                    ApiErrorCode.INVALID_CODE,
-                    "Неверный код подтверждения"
-            );
-        }
+        String phone = smsCodeService.verifyCode(
+                request.phone(),
+                request.code()
+        );
 
         UserEntity user = userRepository.findByPhone(phone)
                 .orElseGet(() -> createUser(phone));

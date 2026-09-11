@@ -16,5 +16,5 @@ public enum ApiErrorCode {
     STORAGE_ERROR,
     INTERNAL_ERROR,
     CODE_EXPIRED,
-    TOO_MANY_ATTEMPTS
+    TOO_MANY_ATTEMPTS,
 }
