@@ -6,6 +6,9 @@ import kz.birchat.api.dto.UserResponse;
 import kz.birchat.api.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
 
 import java.util.UUID;
 
@@ -27,5 +30,11 @@ public class UserController {
             @Valid @RequestBody UpdateUserRequest request
     ) {
         return userService.updateMe(userId, request);
+    }
+
+    @DeleteMapping("/me")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteMe(@RequestParam UUID userId) {
+        userService.deleteMe(userId);
     }
 }

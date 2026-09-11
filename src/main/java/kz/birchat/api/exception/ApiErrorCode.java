@@ -14,5 +14,7 @@ public enum ApiErrorCode {
     VALIDATION,
     BAD_REQUEST,
     STORAGE_ERROR,
-    INTERNAL_ERROR
+    INTERNAL_ERROR,
+    CODE_EXPIRED,
+    TOO_MANY_ATTEMPTS
 }
