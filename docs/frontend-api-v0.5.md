@@ -1,7 +1,7 @@
 # BirChat Backend API для Flutter Frontend
 
-Версия: `v0.4 MVP`
-Дата обновления: `2026-09-09`
+Версия: `v0.5 MVP`
+Дата обновления: `2026-09-11`
 Backend: `Java Spring Boot`
 Database: `PostgreSQL / Neon`
 File Storage: `Supabase Storage`
@@ -35,6 +35,82 @@ Health check:
 ```http
 GET /api/health
 ```
+
+---
+
+# Changelog backend v0.5
+
+## Добавлено в v0.5
+
+### Удаление аккаунта
+
+Добавлен endpoint удаления текущего пользователя:
+
+```http
+DELETE /api/users/me?userId={userId}
+```
+
+Успешный ответ:
+
+```http
+204 No Content
+```
+
+Логика удаления:
+
+```text
+1. Пользователь становится inactive.
+2. Пользователь выходит из всех компаний.
+3. Сообщения пользователя остаются в рабочей переписке компании.
+4. Файлы пользователя остаются в компании.
+5. Номер телефона освобождается.
+6. Повторный вход с тем же номером создаёт нового пользователя.
+```
+
+Решение по кейсу `LAST_DIRECTOR`:
+
+```text
+Удаление аккаунта не блокируем.
+LAST_DIRECTOR не используется.
+Если удаляемый пользователь был единственным директором компании и в компании есть другие active-участники, backend назначает директором самого старого active-участника.
+Если других active-участников нет, компания остаётся без active-участников.
+```
+
+### Настоящая SMS-авторизация
+
+`POST /api/auth/send-code` больше не возвращает `testCode`.
+
+Теперь backend:
+
+```text
+1. Нормализует номер телефона.
+2. Генерирует случайный 4-значный код.
+3. Сохраняет hash кода в PostgreSQL/Neon.
+4. Отправляет SMS через SMSC.kz.
+5. Ограничивает повторную отправку кода cooldown-ом.
+6. Ограничивает количество неверных попыток.
+7. Поддерживает demo-номер для App Store Review без реальной отправки SMS.
+```
+
+Параметры текущего flow:
+
+```text
+Длина кода: 4 цифры
+TTL кода: 300 секунд
+Лимит попыток: 5
+Повторная отправка: не чаще 1 раза в 60 секунд
+```
+
+Новые ошибки auth-flow:
+
+```text
+CODE_EXPIRED       — срок действия кода истёк
+TOO_MANY_ATTEMPTS  — превышено количество попыток или слишком частая отправка кода
+```
+
+### Хостинг без засыпания
+
+Prod backend переведён на платный Render-инстанс без sleep. Для клиента контракт не меняется.
 
 ---
 
@@ -198,14 +274,20 @@ Backend приводит телефон к формату:
 
 На текущем этапе backend работает в MVP-режиме:
 
-* авторизация по телефону работает через mock-логику;
-* SMS пока не отправляется реально;
-* тестовый код подтверждения всегда `1111`;
+* авторизация по телефону работает через реальные SMS-коды;
+* SMS отправляется через SMSC.kz;
+* `POST /api/auth/send-code` больше не возвращает `testCode`;
+* код подтверждения состоит из 4 цифр;
+* срок жизни кода — 5 минут;
+* есть ограничение количества попыток ввода кода;
+* есть ограничение повторной отправки SMS;
+* есть demo-номер для App Store Review без реальной отправки SMS;
 * JWT пока не реализован;
 * вместо JWT временно используется `userId`;
 * для некоторых методов временно передается `actorUserId`, чтобы понять, кто выполняет действие;
 * даты возвращаются в UTC с `Z`;
-* файлы хранятся в Supabase Storage, metadata файлов — в PostgreSQL/Neon.
+* файлы хранятся в Supabase Storage, metadata файлов — в PostgreSQL/Neon;
+* prod backend работает на платном Render-инстансе без sleep.
 
 Позже `userId` и `actorUserId` будут заменены на получение пользователя из JWT-токена.
 
@@ -242,19 +324,61 @@ Backend нормализует телефон. Можно отправлять:
 
 ```json
 {
+  "message": "Код подтверждения отправлен"
+}
+```
+
+### Важное изменение v0.5
+
+Поле `testCode` больше не возвращается.
+
+Было в mock-режиме:
+
+```json
+{
   "message": "Код подтверждения отправлен на номер +77005554433",
   "testCode": "1111"
 }
 ```
 
-### Использование во Flutter
+Стало:
 
-Этот метод вызывается на экране входа после ввода номера телефона.
+```json
+{
+  "message": "Код подтверждения отправлен"
+}
+```
 
-Пока код всегда:
+Подсказку с тестовым кодом на клиенте больше не показывать. Если Flutter показывает подсказку только при наличии поля `testCode`, она исчезнет автоматически.
+
+### Логика
 
 ```text
-1111
+1. Backend нормализует номер телефона.
+2. Проверяет cooldown повторной отправки.
+3. Создает случайный 4-значный код.
+4. Сохраняет hash кода в таблицу birchat.auth_codes.
+5. Отправляет SMS через SMSC.kz.
+6. Возвращает только message.
+```
+
+### Demo-номер для App Store Review
+
+Для demo-номера SMS не отправляется. Код фиксированный и передается отдельно в App Store Review Notes.
+
+Demo-номер и demo-код не нужно хардкодить на клиенте. Клиент работает через тот же flow:
+
+```text
+POST /api/auth/send-code
+POST /api/auth/verify-code
+```
+
+### Ошибки
+
+```text
+400 VALIDATION — некорректный номер телефона
+400 TOO_MANY_ATTEMPTS — код уже был отправлен, повторите позже
+400 BAD_REQUEST — SMS-провайдер не смог отправить сообщение или не настроен
 ```
 
 ---
@@ -272,9 +396,11 @@ POST /api/auth/verify-code
 ```json
 {
   "phone": "+77005554433",
-  "code": "1111"
+  "code": "4821"
 }
 ```
+
+`code` — 4 цифры из SMS.
 
 ### Response
 
@@ -289,13 +415,15 @@ POST /api/auth/verify-code
 }
 ```
 
+`accessToken` пока остается mock-значением. JWT будет добавлен отдельным этапом.
+
 ### Ошибки
 
 Неверный код:
 
 ```json
 {
-  "timestamp": "2026-09-09T10:20:00.123Z",
+  "timestamp": "2026-09-11T18:20:00.123Z",
   "status": 400,
   "error": "BAD_REQUEST",
   "code": "INVALID_CODE",
@@ -304,11 +432,48 @@ POST /api/auth/verify-code
 }
 ```
 
+Код истёк:
+
+```json
+{
+  "timestamp": "2026-09-11T18:20:00.123Z",
+  "status": 400,
+  "error": "BAD_REQUEST",
+  "code": "CODE_EXPIRED",
+  "message": "Срок действия кода истёк",
+  "path": "/api/auth/verify-code"
+}
+```
+
+Превышено количество попыток:
+
+```json
+{
+  "timestamp": "2026-09-11T18:20:00.123Z",
+  "status": 400,
+  "error": "BAD_REQUEST",
+  "code": "TOO_MANY_ATTEMPTS",
+  "message": "Превышено количество попыток ввода кода",
+  "path": "/api/auth/verify-code"
+}
+```
+
 ### Логика
 
-Если пользователь с таким телефоном уже есть в базе, backend возвращает существующего пользователя.
+```text
+1. Backend нормализует телефон.
+2. Ищет последний активный код по номеру.
+3. Проверяет срок действия кода.
+4. Проверяет лимит попыток.
+5. Сравнивает hash введенного кода с hash в БД.
+6. При успешной проверке помечает код consumed=true.
+7. Если пользователь с таким телефоном уже есть в базе, возвращает существующего пользователя.
+8. Если пользователя нет, создает нового пользователя.
+```
 
-Если пользователя нет, backend создает нового пользователя с именем-заглушкой:
+Если аккаунт ранее был удалён, его номер телефона освобожден. Поэтому повторный вход с тем же номером создаст нового пользователя.
+
+Новый пользователь создается с именем-заглушкой:
 
 ```text
 fullName: Новый пользователь
@@ -392,6 +557,74 @@ PUT /api/users/me?userId={userId}
 ### Логика
 
 Backend обновляет `fullName`, а `displayName` и `initials` пересчитывает автоматически.
+
+---
+
+## 3.3. Удалить аккаунт
+
+### Endpoint
+
+```http
+DELETE /api/users/me?userId={userId}
+```
+
+### Example
+
+```http
+DELETE /api/users/me?userId=598586f3-9c44-4eb0-9c65-f280cb5eee85
+```
+
+### Response
+
+```http
+204 No Content
+```
+
+Тело ответа отсутствует.
+
+### Что делает backend
+
+```text
+1. Пользователь становится inactive.
+2. Все active membership пользователя становятся INACTIVE.
+3. Сообщения пользователя остаются в чатах компании.
+4. Файлы пользователя остаются в компании.
+5. Номер телефона освобождается.
+6. Повторный вход с тем же номером создаёт нового пользователя.
+```
+
+### Поведение для единственного директора
+
+Удаление аккаунта не блокируется.
+
+```text
+LAST_DIRECTOR не используется.
+```
+
+Если удаляемый пользователь был единственным директором компании:
+
+```text
+1. Если в компании есть другие active-участники, backend назначает директором самого старого active-участника.
+2. Если других active-участников нет, компания остаётся без active-участников.
+```
+
+### Ошибки
+
+```text
+400 VALIDATION — отсутствует userId или некорректный UUID
+404 USER_NOT_FOUND — пользователь не найден
+```
+
+### Использование во Flutter
+
+Используется на экране профиля:
+
+```text
+Профиль → Удалить аккаунт → Подтверждение → DELETE /api/users/me?userId=...
+```
+
+После `204 No Content` клиент должен очистить локальные данные пользователя и вернуть его на экран входа.
+
 
 ---
 
@@ -1171,23 +1404,36 @@ ADMIN       — Администратор
 500 INTERNAL_SERVER_ERROR — внутренняя ошибка сервера
 ```
 
+## Особенности auth-ошибок
+
+Для `POST /api/auth/send-code` и `POST /api/auth/verify-code` Flutter должен ориентироваться на поле `code`:
+
+```text
+INVALID_CODE       — показать пользователю, что код неверный
+CODE_EXPIRED       — предложить запросить новый код
+TOO_MANY_ATTEMPTS  — временно заблокировать повторную отправку/ввод
+BAD_REQUEST        — показать общую ошибку отправки SMS
+```
+
 ## Возможные error code
 
 ```text
-INVALID_CODE
-USER_NOT_FOUND
-COMPANY_NOT_FOUND
-CHAT_NOT_FOUND
-MESSAGE_NOT_FOUND
-FILE_NOT_FOUND
-ROLE_NOT_FOUND
-NOT_A_MEMBER
-FORBIDDEN
-ALREADY_MEMBER
-VALIDATION
-BAD_REQUEST
-STORAGE_ERROR
-INTERNAL_ERROR
+INVALID_CODE        — неверный код подтверждения
+CODE_EXPIRED        — срок действия кода истёк
+TOO_MANY_ATTEMPTS   — превышено количество попыток или слишком частая отправка кода
+USER_NOT_FOUND      — пользователь не найден
+COMPANY_NOT_FOUND   — компания не найдена
+CHAT_NOT_FOUND      — чат не найден
+MESSAGE_NOT_FOUND   — сообщение не найдено
+FILE_NOT_FOUND      — файл не найден
+ROLE_NOT_FOUND      — роль не найдена
+NOT_A_MEMBER        — пользователь не состоит в компании
+FORBIDDEN           — недостаточно прав
+ALREADY_MEMBER      — пользователь уже состоит в компании
+VALIDATION          — ошибка валидации запроса
+BAD_REQUEST         — некорректный запрос или ошибка внешнего провайдера
+STORAGE_ERROR       — ошибка файлового storage
+INTERNAL_ERROR      — внутренняя ошибка сервера
 ```
 
 ## Рекомендация для Flutter
@@ -1298,8 +1544,9 @@ POST /api/auth/send-code
 POST /api/auth/verify-code
 
 Users:
-GET  /api/users/me?userId={userId}
-PUT  /api/users/me?userId={userId}
+GET    /api/users/me?userId={userId}
+PUT    /api/users/me?userId={userId}
+DELETE /api/users/me?userId={userId}
 
 Companies:
 GET  /api/companies/my?userId={userId}
@@ -1356,7 +1603,9 @@ PUT /api/companies/{companyId}/settings
 
 * нет настоящего JWT;
 * нет Spring Security;
-* нет реальной отправки SMS;
+* `accessToken` в `verify-code` пока остается mock-строкой;
+* временно используется `userId` в query-параметрах;
+* для добавления сотрудника временно используется `actorUserId`;
 * нет WebSocket;
 * нет AI-интеграции;
 * нет поиска;
@@ -1365,13 +1614,19 @@ PUT /api/companies/{companyId}/settings
 * нет ролей на уровне permissions;
 * нет refresh token.
 
-Файлы уже загружаются через backend в Supabase Storage. Для открытия private-файла нужно использовать `/download-url`.
+Уже реализовано:
+
+* реальная отправка SMS через SMSC.kz;
+* demo-номер для App Store Review без реальной SMS;
+* удаление аккаунта через `DELETE /api/users/me`;
+* файлы загружаются через backend в Supabase Storage;
+* для открытия private-файла используется `/download-url`.
 
 ---
 
 # 15. Рекомендации для Flutter-разработки
 
-Frontend может начинать подключение в таком порядке:
+Frontend может подключать backend в таком порядке:
 
 1. `GET /api/health`
 2. `POST /api/auth/send-code`
@@ -1388,7 +1643,15 @@ Frontend может начинать подключение в таком пор
 13. загружать файл через `POST /api/companies/{companyId}/files/upload?userId=...`;
 14. отправлять файл в чат через `POST /api/companies/{companyId}/chats/general/messages/file`;
 15. при открытии файла получать временную ссылку через `/download-url`;
-16. при просмотре чата отмечать прочтение через `POST /api/companies/{companyId}/chats/general/read?userId=...`.
+16. при просмотре чата отмечать прочтение через `POST /api/companies/{companyId}/chats/general/read?userId=...`;
+17. на экране профиля удалять аккаунт через `DELETE /api/users/me?userId=...`.
+
+Для auth-flow после v0.5 важно:
+
+```text
+send-code больше не возвращает testCode.
+Код приходит только по SMS, кроме demo-номера для App Store Review.
+```
 
 ---
 
@@ -1397,6 +1660,7 @@ Frontend может начинать подключение в таком пор
 ```text
 LoginScreen
     ↓ POST /api/auth/send-code
+    ↓ SMS приходит пользователю
 
 VerifyCodeScreen
     ↓ POST /api/auth/verify-code
@@ -1404,6 +1668,8 @@ VerifyCodeScreen
 
 ProfileScreen / Bootstrap
     ↓ GET /api/users/me?userId=...
+    ↓ PUT /api/users/me?userId=...            optional
+    ↓ DELETE /api/users/me?userId=...         account deletion
 
 SelectCompanyScreen
     ↓ GET /api/companies/my?userId=...
