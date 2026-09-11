@@ -26,19 +26,30 @@ public class SmscSmsSender implements SmsSender {
         try {
             String response = RestClient.create()
                     .get()
-                    .uri(uriBuilder -> uriBuilder
-                            .scheme("https")
-                            .host("smsc.kz")
-                            .path("/sys/send.php")
-                            .queryParam("login", properties.login())
-                            .queryParam("psw", properties.password())
-                            .queryParam("apikey", properties.apiKey())
-                            .queryParam("phones", smsPhone)
-                            .queryParam("mes", message)
-                            .queryParam("charset", "utf-8")
-                            .build()
-                    )
-                    .accept(MediaType.TEXT_PLAIN)
+                    .uri(uriBuilder -> {
+                        var builder = uriBuilder
+                                .scheme("https")
+                                .host("smsc.kz")
+                                .path("/sys/send.php")
+                                .queryParam("phones", smsPhone)
+                                .queryParam("mes", message)
+                                .queryParam("charset", "utf-8")
+                                .queryParam("fmt", "3");
+
+                        if (!isBlank(properties.apiKey())) {
+                            builder.queryParam("apikey", properties.apiKey().trim());
+                        } else {
+                            builder.queryParam("login", properties.login().trim());
+                            builder.queryParam("psw", properties.password().trim());
+                        }
+
+                        if (!isBlank(properties.sender())) {
+                            builder.queryParam("sender", properties.sender().trim());
+                        }
+
+                        return builder.build();
+                    })
+                    .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
                     .body(String.class);
 
@@ -49,7 +60,7 @@ public class SmscSmsSender implements SmsSender {
                 );
             }
 
-            if (response.startsWith("ERROR")) {
+            if (response.contains("\"error\"") || response.startsWith("ERROR")) {
                 throw ApiException.badRequest(
                         ApiErrorCode.BAD_REQUEST,
                         "SMSC ошибка: " + response
