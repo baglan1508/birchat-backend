@@ -1,6 +1,6 @@
 # BirChat Backend · App Store Readiness
 
-Дата обновления: `2026-09-11`
+Дата обновления: `2026-09-13`
 Backend prod: `https://birchat-backend.onrender.com`
 Swagger prod: `https://birchat-backend.onrender.com/swagger-ui.html`
 
@@ -14,6 +14,8 @@ Swagger prod: `https://birchat-backend.onrender.com/swagger-ui.html`
 | 2 | Реальная SMS | Готово | SMS отправляется через SMSC.kz, `testCode` из ответа убран |
 | 3 | Хостинг без sleep | Готово | Render переведён на платный инстанс |
 | 4 | JWT вместо `userId` в query | Позже | Не блокирует первую подачу, но нужен до публичного релиза |
+
+Дополнительно после закрытия App Store блокеров реализован `GET /api/companies/{companyId}/search?userId={userId}&query={text}&limit=20` для поиска по сообщениям общего чата и именам файлов компании.
 
 ---
 
@@ -211,12 +213,50 @@ flutter test --tags live --run-skipped test/live_backend_test.dart
 10. GET /api/companies/{companyId}/files/{fileId}/download-url?userId=...
 11. POST /api/companies/{companyId}/chats/general/messages/file
 12. POST /api/companies/{companyId}/chats/general/read?userId=...
-13. DELETE /api/users/me?userId=...
+13. GET /api/companies/{companyId}/search?userId=...&query=...&limit=20
+14. DELETE /api/users/me?userId=...
 ```
 
 ---
 
-# 7. Prod env без секретов
+# 7. Дополнительная проверка Search API
+
+Search API не является App Store blocker, но уже доступен на prod и может быть подключён клиентом.
+
+Endpoint:
+
+```http
+GET /api/companies/{companyId}/search?userId={userId}&query={text}&limit=20
+```
+
+Проверка на prod:
+
+```bash
+curl -G \
+  "https://birchat-backend.onrender.com/api/companies/{companyId}/search" \
+  -H "accept: application/json" \
+  --data-urlencode "userId={userId}" \
+  --data-urlencode "query=файл" \
+  --data-urlencode "limit=20"
+```
+
+Ожидаемо возвращается массив результатов. Возможные `type`:
+
+```text
+MESSAGE — найдено сообщение общего чата
+FILE    — найден файл компании по originalFileName
+```
+
+Ошибки:
+
+```text
+400 VALIDATION — query пустой, query меньше 2 символов или limit меньше 1
+403 NOT_A_MEMBER — пользователь не состоит в компании
+```
+
+---
+
+# 8. Prod env без секретов
 
 На Render должны быть настроены переменные:
 

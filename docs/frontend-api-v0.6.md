@@ -1,7 +1,7 @@
 # BirChat Backend API для Flutter Frontend
 
-Версия: `v0.5 MVP`
-Дата обновления: `2026-09-11`
+Версия: `v0.6 MVP`
+Дата обновления: `2026-09-13`
 Backend: `Java Spring Boot`
 Database: `PostgreSQL / Neon`
 File Storage: `Supabase Storage`
@@ -35,6 +35,31 @@ Health check:
 ```http
 GET /api/health
 ```
+
+---
+
+# Changelog backend v0.6
+
+## Добавлено в v0.6
+
+### Поиск по компании
+
+Добавлен endpoint поиска по данным компании:
+
+```http
+GET /api/companies/{companyId}/search?userId={userId}&query={text}&limit=20
+```
+
+На текущем этапе поиск работает по двум источникам:
+
+```text
+1. Сообщения общего чата — поле chat_messages.content
+2. Файлы компании — поле company_files.original_file_name
+```
+
+Ответ возвращается единым списком результатов с типом `MESSAGE` или `FILE`, отсортированным по `createdAt DESC`.
+
+Важно для Flutter: поиск по файлам ищет только по имени файла, не по содержимому файла.
 
 ---
 
@@ -287,6 +312,7 @@ Backend приводит телефон к формату:
 * для некоторых методов временно передается `actorUserId`, чтобы понять, кто выполняет действие;
 * даты возвращаются в UTC с `Z`;
 * файлы хранятся в Supabase Storage, metadata файлов — в PostgreSQL/Neon;
+* реализован поиск по сообщениям общего чата и именам файлов компании;
 * prod backend работает на платном Render-инстансе без sleep.
 
 Позже `userId` и `actorUserId` будут заменены на получение пользователя из JWT-токена.
@@ -1236,9 +1262,111 @@ GET /api/companies/{companyId}/files/{fileId}/download-url?userId={userId}&expir
 
 ---
 
-# 7. Сотрудники компании
+# 7. Поиск по компании
 
-## 7.1. Получить список сотрудников
+## 7.1. Найти сообщения и файлы
+
+### Endpoint
+
+```http
+GET /api/companies/{companyId}/search?userId={userId}&query={text}&limit=20
+```
+
+### Query params
+
+| name | type | required | description |
+|---|---|---|---|
+| userId | UUID | yes | ID текущего пользователя |
+| query | string | yes | Строка поиска. Минимум 2 символа |
+| limit | int | no | Максимум результатов. Default `20`, max `50` |
+
+### Example
+
+```http
+GET /api/companies/5479c4a8-f805-4d0d-bbc8-87a45af85b93/search?userId=598586f3-9c44-4eb0-9c65-f280cb5eee85&query=файл&limit=20
+```
+
+### Response
+
+```json
+[
+  {
+    "type": "MESSAGE",
+    "id": "message-uuid",
+    "title": "Сообщение от Азамат",
+    "text": "search-prod-test-birchat-001",
+    "createdAt": "2026-09-13T13:40:00Z",
+    "messageId": "message-uuid",
+    "fileId": null
+  },
+  {
+    "type": "FILE",
+    "id": "file-uuid",
+    "title": "search-prod-file-001.txt",
+    "text": "text/plain · 12 B",
+    "createdAt": "2026-09-13T13:41:00Z",
+    "messageId": null,
+    "fileId": "file-uuid"
+  }
+]
+```
+
+### Поля ответа
+
+| field | type | description |
+|---|---|---|
+| type | string | Тип результата: `MESSAGE` или `FILE` |
+| id | UUID | Основной ID результата. Для сообщения = `messageId`, для файла = `fileId` |
+| title | string | Заголовок для отображения |
+| text | string | Текст результата: содержимое сообщения или описание файла |
+| createdAt | datetime | Дата создания результата в UTC с `Z` |
+| messageId | UUID/null | ID сообщения, если `type = MESSAGE` |
+| fileId | UUID/null | ID файла, если `type = FILE` |
+
+### Логика
+
+```text
+1. Backend проверяет, что userId является active-участником компании.
+2. Ищет query в chat_messages.content.
+3. Ищет query в company_files.original_file_name.
+4. Объединяет результаты.
+5. Сортирует по createdAt DESC.
+6. Возвращает максимум limit результатов.
+```
+
+### Ограничения MVP
+
+```text
+1. Поиск выполняется через LIKE/ILIKE-логику, без PostgreSQL full-text search.
+2. Поиск по файлам работает только по originalFileName.
+3. Поиск по содержимому PDF/Word/Excel пока не реализован.
+4. Поиск выполняется только внутри одной компании.
+```
+
+### Ошибки
+
+```text
+400 VALIDATION — query пустой, query меньше 2 символов или limit меньше 1
+403 NOT_A_MEMBER — пользователь не состоит в компании
+```
+
+### Использование во Flutter
+
+Используется на экране поиска внутри выбранной компании.
+
+Для результата `MESSAGE` Flutter может открыть общий чат и подсветить/проскроллить к сообщению позже, когда будет реализована поддержка перехода к конкретному сообщению.
+
+Для результата `FILE` Flutter должен использовать `fileId` и открыть файл через:
+
+```http
+GET /api/companies/{companyId}/files/{fileId}/download-url?userId={userId}
+```
+
+---
+
+# 8. Сотрудники компании
+
+## 8.1. Получить список сотрудников
 
 ### Endpoint
 
@@ -1293,7 +1421,7 @@ profile
 
 ---
 
-## 7.2. Добавить сотрудника
+## 8.2. Добавить сотрудника
 
 ### Endpoint
 
@@ -1364,7 +1492,7 @@ ADMIN
 
 ---
 
-# 8. Роли
+# 9. Роли
 
 На текущем этапе доступны роли:
 
@@ -1379,7 +1507,7 @@ ADMIN       — Администратор
 
 ---
 
-# 9. Формат ошибок
+# 10. Формат ошибок
 
 Все обработанные ошибки возвращаются в едином формате:
 
@@ -1444,7 +1572,7 @@ INTERNAL_ERROR      — внутренняя ошибка сервера
 
 ---
 
-# 10. Рекомендуемая структура Flutter API слоя
+# 11. Рекомендуемая структура Flutter API слоя
 
 Рекомендуется добавить во Flutter проект такие папки:
 
@@ -1473,7 +1601,7 @@ lib/data/repositories/file_repository.dart
 
 ---
 
-# 11. Рекомендуемый ApiClient на Flutter
+# 12. Рекомендуемый ApiClient на Flutter
 
 Для запросов можно использовать `dio`.
 
@@ -1531,7 +1659,7 @@ https://birchat-backend.onrender.com
 
 ---
 
-# 12. Что сейчас готово для подключения Flutter
+# 13. Что сейчас готово для подключения Flutter
 
 Готовые backend API:
 
@@ -1567,6 +1695,9 @@ GET  /api/companies/{companyId}/files?userId={userId}
 GET  /api/companies/{companyId}/files/{fileId}?userId={userId}
 GET  /api/companies/{companyId}/files/{fileId}/download-url?userId={userId}
 
+Search:
+GET  /api/companies/{companyId}/search?userId={userId}&query={text}&limit=20
+
 Employees:
 GET  /api/companies/{companyId}/employees?userId={userId}
 POST /api/companies/{companyId}/employees?actorUserId={actorUserId}
@@ -1574,7 +1705,7 @@ POST /api/companies/{companyId}/employees?actorUserId={actorUserId}
 
 ---
 
-# 13. Что будет добавлено позже
+# 14. Что будет добавлено позже
 
 Следующие API будут добавляться по мере разработки:
 
@@ -1582,9 +1713,6 @@ POST /api/companies/{companyId}/employees?actorUserId={actorUserId}
 AI:
 POST /api/companies/{companyId}/ai/ask
 GET  /api/companies/{companyId}/ai/director/summary/today
-
-Поиск:
-GET  /api/companies/{companyId}/search
 
 История отправок:
 GET  /api/companies/{companyId}/share-history
@@ -1597,7 +1725,7 @@ PUT /api/companies/{companyId}/settings
 
 ---
 
-# 14. Временные технические ограничения
+# 15. Временные технические ограничения
 
 На текущем этапе:
 
@@ -1608,7 +1736,6 @@ PUT /api/companies/{companyId}/settings
 * для добавления сотрудника временно используется `actorUserId`;
 * нет WebSocket;
 * нет AI-интеграции;
-* нет поиска;
 * нет истории отправок;
 * нет настроек компании;
 * нет ролей на уровне permissions;
@@ -1620,11 +1747,12 @@ PUT /api/companies/{companyId}/settings
 * demo-номер для App Store Review без реальной SMS;
 * удаление аккаунта через `DELETE /api/users/me`;
 * файлы загружаются через backend в Supabase Storage;
-* для открытия private-файла используется `/download-url`.
+* для открытия private-файла используется `/download-url`;
+* поиск по сообщениям общего чата и именам файлов компании.
 
 ---
 
-# 15. Рекомендации для Flutter-разработки
+# 16. Рекомендации для Flutter-разработки
 
 Frontend может подключать backend в таком порядке:
 
@@ -1643,8 +1771,9 @@ Frontend может подключать backend в таком порядке:
 13. загружать файл через `POST /api/companies/{companyId}/files/upload?userId=...`;
 14. отправлять файл в чат через `POST /api/companies/{companyId}/chats/general/messages/file`;
 15. при открытии файла получать временную ссылку через `/download-url`;
-16. при просмотре чата отмечать прочтение через `POST /api/companies/{companyId}/chats/general/read?userId=...`;
-17. на экране профиля удалять аккаунт через `DELETE /api/users/me?userId=...`.
+16. искать сообщения и файлы через `GET /api/companies/{companyId}/search?userId=...&query=...`;
+17. при просмотре чата отмечать прочтение через `POST /api/companies/{companyId}/chats/general/read?userId=...`;
+18. на экране профиля удалять аккаунт через `DELETE /api/users/me?userId=...`.
 
 Для auth-flow после v0.5 важно:
 
@@ -1655,7 +1784,7 @@ send-code больше не возвращает testCode.
 
 ---
 
-# 16. Пример frontend flow
+# 17. Пример frontend flow
 
 ```text
 LoginScreen
@@ -1689,6 +1818,9 @@ FilesScreen
     ↓ GET /api/companies/{companyId}/files?userId=...
     ↓ POST /api/companies/{companyId}/files/upload?userId=...
     ↓ GET /api/companies/{companyId}/files/{fileId}/download-url?userId=...
+
+SearchScreen
+    ↓ GET /api/companies/{companyId}/search?userId=...&query=...&limit=20
 
 SendFileToChat
     ↓ POST /api/companies/{companyId}/files/upload?userId=...
