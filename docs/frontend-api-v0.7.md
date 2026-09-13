@@ -1,6 +1,6 @@
 # BirChat Backend API для Flutter Frontend
 
-Версия: `v0.6 MVP`
+Версия: `v0.7 MVP`
 Дата обновления: `2026-09-13`
 Backend: `Java Spring Boot`
 Database: `PostgreSQL / Neon`
@@ -34,6 +34,32 @@ Health check:
 
 ```http
 GET /api/health
+```
+
+---
+
+# Changelog backend v0.7
+
+## Добавлено в v0.7
+
+### AI mock endpoints
+
+Добавлены mock endpoints для экрана AI Director:
+
+```http
+POST /api/companies/{companyId}/ai/ask?userId={userId}
+GET  /api/companies/{companyId}/ai/director/summary/today?userId={userId}
+```
+
+На текущем этапе это не настоящая OpenAI-интеграция. Backend возвращает тестовые mock-ответы, но контракт уже можно подключать во Flutter.
+
+Общие правила:
+
+```text
+1. Backend проверяет, что userId является active-участником компании.
+2. Для чужого пользователя возвращается NOT_A_MEMBER.
+3. Даты возвращаются в UTC с Z.
+4. model в ответе равен mock.
 ```
 
 ---
@@ -1364,9 +1390,133 @@ GET /api/companies/{companyId}/files/{fileId}/download-url?userId={userId}
 
 ---
 
-# 8. Сотрудники компании
+# 8. AI Director mock
 
-## 8.1. Получить список сотрудников
+На текущем этапе AI работает в mock-режиме. Это нужно, чтобы Flutter уже мог подключить экран AI Director, не ожидая настоящей OpenAI-интеграции.
+
+## 8.1. Задать вопрос AI
+
+### Endpoint
+
+```http
+POST /api/companies/{companyId}/ai/ask?userId={userId}
+```
+
+### Query params
+
+| name | type | required | description |
+|---|---|---|---|
+| userId | UUID | yes | ID текущего пользователя |
+
+### Request body
+
+```json
+{
+  "question": "Что сегодня было в компании?"
+}
+```
+
+### Response
+
+```json
+{
+  "answer": "AI mock: я пока работаю в тестовом режиме.\nПозже здесь будет ответ на основе сообщений, файлов и памяти компании.\n\nВаш вопрос: Что сегодня было в компании?\n",
+  "model": "mock",
+  "createdAt": "2026-09-13T16:55:00Z"
+}
+```
+
+### Поля ответа
+
+| field | type | description |
+|---|---|---|
+| answer | string | Ответ AI для отображения пользователю |
+| model | string | На текущем этапе всегда `mock` |
+| createdAt | datetime | Дата создания ответа в UTC с `Z` |
+
+### Ограничения
+
+```text
+question обязателен
+question не должен превышать 5000 символов
+пользователь должен быть active-участником компании
+```
+
+### Ошибки
+
+```text
+400 VALIDATION — question пустой или превышает 5000 символов
+403 NOT_A_MEMBER — пользователь не состоит в компании
+```
+
+### Использование во Flutter
+
+Используется на экране AI Director, когда пользователь отправляет вопрос. Сейчас ответ можно показывать как обычное сообщение AI.
+
+---
+
+## 8.2. Получить сводку AI Director за сегодня
+
+### Endpoint
+
+```http
+GET /api/companies/{companyId}/ai/director/summary/today?userId={userId}
+```
+
+### Query params
+
+| name | type | required | description |
+|---|---|---|---|
+| userId | UUID | yes | ID текущего пользователя |
+
+### Example
+
+```http
+GET /api/companies/5479c4a8-f805-4d0d-bbc8-87a45af85b93/ai/director/summary/today?userId=598586f3-9c44-4eb0-9c65-f280cb5eee85
+```
+
+### Response
+
+```json
+{
+  "title": "Сводка за сегодня",
+  "summary": "AI mock: позже здесь будет краткая сводка по сообщениям, файлам и активности компании за сегодня.",
+  "items": [
+    "Сообщения общего чата будут анализироваться позже",
+    "Файлы компании будут учитываться позже",
+    "Память компании будет добавлена отдельным этапом",
+    "Интеграция с OpenAI будет подключена после mock-этапа"
+  ],
+  "createdAt": "2026-09-13T16:55:00Z"
+}
+```
+
+### Поля ответа
+
+| field | type | description |
+|---|---|---|
+| title | string | Заголовок блока сводки |
+| summary | string | Основной текст сводки |
+| items | array[string] | Короткие пункты для отображения списком |
+| createdAt | datetime | Дата создания сводки в UTC с `Z` |
+
+### Ошибки
+
+```text
+403 NOT_A_MEMBER — пользователь не состоит в компании
+```
+
+### Использование во Flutter
+
+Используется для первого экрана AI Director или блока “Сводка за сегодня”.
+
+Важно: текущий endpoint возвращает mock-данные. Не нужно строить бизнес-логику на конкретном тексте `summary` и `items`, потому что после подключения OpenAI содержимое ответа изменится.
+
+---
+
+# 9. Сотрудники компании
+
+## 9.1. Получить список сотрудников
 
 ### Endpoint
 
@@ -1421,7 +1571,7 @@ profile
 
 ---
 
-## 8.2. Добавить сотрудника
+## 9.2. Добавить сотрудника
 
 ### Endpoint
 
@@ -1492,7 +1642,7 @@ ADMIN
 
 ---
 
-# 9. Роли
+# 10. Роли
 
 На текущем этапе доступны роли:
 
@@ -1507,7 +1657,7 @@ ADMIN       — Администратор
 
 ---
 
-# 10. Формат ошибок
+# 11. Формат ошибок
 
 Все обработанные ошибки возвращаются в едином формате:
 
@@ -1572,7 +1722,7 @@ INTERNAL_ERROR      — внутренняя ошибка сервера
 
 ---
 
-# 11. Рекомендуемая структура Flutter API слоя
+# 12. Рекомендуемая структура Flutter API слоя
 
 Рекомендуется добавить во Flutter проект такие папки:
 
@@ -1601,7 +1751,7 @@ lib/data/repositories/file_repository.dart
 
 ---
 
-# 12. Рекомендуемый ApiClient на Flutter
+# 13. Рекомендуемый ApiClient на Flutter
 
 Для запросов можно использовать `dio`.
 
@@ -1659,7 +1809,7 @@ https://birchat-backend.onrender.com
 
 ---
 
-# 13. Что сейчас готово для подключения Flutter
+# 14. Что сейчас готово для подключения Flutter
 
 Готовые backend API:
 
@@ -1698,6 +1848,10 @@ GET  /api/companies/{companyId}/files/{fileId}/download-url?userId={userId}
 Search:
 GET  /api/companies/{companyId}/search?userId={userId}&query={text}&limit=20
 
+AI:
+POST /api/companies/{companyId}/ai/ask?userId={userId}
+GET  /api/companies/{companyId}/ai/director/summary/today?userId={userId}
+
 Employees:
 GET  /api/companies/{companyId}/employees?userId={userId}
 POST /api/companies/{companyId}/employees?actorUserId={actorUserId}
@@ -1705,15 +1859,11 @@ POST /api/companies/{companyId}/employees?actorUserId={actorUserId}
 
 ---
 
-# 14. Что будет добавлено позже
+# 15. Что будет добавлено позже
 
 Следующие API будут добавляться по мере разработки:
 
 ```text
-AI:
-POST /api/companies/{companyId}/ai/ask
-GET  /api/companies/{companyId}/ai/director/summary/today
-
 История отправок:
 GET  /api/companies/{companyId}/share-history
 POST /api/companies/{companyId}/share-history
@@ -1725,7 +1875,7 @@ PUT /api/companies/{companyId}/settings
 
 ---
 
-# 15. Временные технические ограничения
+# 16. Временные технические ограничения
 
 На текущем этапе:
 
@@ -1735,7 +1885,7 @@ PUT /api/companies/{companyId}/settings
 * временно используется `userId` в query-параметрах;
 * для добавления сотрудника временно используется `actorUserId`;
 * нет WebSocket;
-* нет AI-интеграции;
+* нет настоящей OpenAI-интеграции; AI endpoints пока работают в mock-режиме;
 * нет истории отправок;
 * нет настроек компании;
 * нет ролей на уровне permissions;
@@ -1748,11 +1898,12 @@ PUT /api/companies/{companyId}/settings
 * удаление аккаунта через `DELETE /api/users/me`;
 * файлы загружаются через backend в Supabase Storage;
 * для открытия private-файла используется `/download-url`;
-* поиск по сообщениям общего чата и именам файлов компании.
+* поиск по сообщениям общего чата и именам файлов компании;
+* AI mock endpoints для экрана AI Director.
 
 ---
 
-# 16. Рекомендации для Flutter-разработки
+# 17. Рекомендации для Flutter-разработки
 
 Frontend может подключать backend в таком порядке:
 
@@ -1765,15 +1916,18 @@ Frontend может подключать backend в таком порядке:
 7. `GET /api/companies/my?userId=...`;
 8. выбрать компанию;
 9. `GET /api/companies/{companyId}/home?userId=...`;
-10. открыть чат;
-11. `GET /api/companies/{companyId}/chats/general/messages?userId=...&limit=50`;
-12. отправлять текст через `POST /api/companies/{companyId}/chats/general/messages`;
-13. загружать файл через `POST /api/companies/{companyId}/files/upload?userId=...`;
-14. отправлять файл в чат через `POST /api/companies/{companyId}/chats/general/messages/file`;
-15. при открытии файла получать временную ссылку через `/download-url`;
-16. искать сообщения и файлы через `GET /api/companies/{companyId}/search?userId=...&query=...`;
-17. при просмотре чата отмечать прочтение через `POST /api/companies/{companyId}/chats/general/read?userId=...`;
-18. на экране профиля удалять аккаунт через `DELETE /api/users/me?userId=...`.
+10. открыть экран AI Director при необходимости;
+11. получить сводку через `GET /api/companies/{companyId}/ai/director/summary/today?userId=...`;
+12. отправлять вопрос через `POST /api/companies/{companyId}/ai/ask?userId=...`;
+13. открыть чат;
+14. `GET /api/companies/{companyId}/chats/general/messages?userId=...&limit=50`;
+15. отправлять текст через `POST /api/companies/{companyId}/chats/general/messages`;
+16. загружать файл через `POST /api/companies/{companyId}/files/upload?userId=...`;
+17. отправлять файл в чат через `POST /api/companies/{companyId}/chats/general/messages/file`;
+18. при открытии файла получать временную ссылку через `/download-url`;
+19. искать сообщения и файлы через `GET /api/companies/{companyId}/search?userId=...&query=...`;
+20. при просмотре чата отмечать прочтение через `POST /api/companies/{companyId}/chats/general/read?userId=...`;
+21. на экране профиля удалять аккаунт через `DELETE /api/users/me?userId=...`.
 
 Для auth-flow после v0.5 важно:
 
@@ -1784,7 +1938,7 @@ send-code больше не возвращает testCode.
 
 ---
 
-# 17. Пример frontend flow
+# 18. Пример frontend flow
 
 ```text
 LoginScreen
@@ -1806,6 +1960,11 @@ SelectCompanyScreen
 HomeScreen
     ↓ GET /api/companies/{companyId}/home?userId=...
     ↓ показывает generalChat.unreadCount
+    ↓ показывает aiDirector.available
+
+AiDirectorScreen
+    ↓ GET /api/companies/{companyId}/ai/director/summary/today?userId=...
+    ↓ POST /api/companies/{companyId}/ai/ask?userId=...
 
 ChatScreen
     ↓ GET /api/companies/{companyId}/chats/general/messages?userId=...&limit=50

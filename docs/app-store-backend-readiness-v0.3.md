@@ -15,7 +15,17 @@ Swagger prod: `https://birchat-backend.onrender.com/swagger-ui.html`
 | 3 | Хостинг без sleep | Готово | Render переведён на платный инстанс |
 | 4 | JWT вместо `userId` в query | Позже | Не блокирует первую подачу, но нужен до публичного релиза |
 
-Дополнительно после закрытия App Store блокеров реализован `GET /api/companies/{companyId}/search?userId={userId}&query={text}&limit=20` для поиска по сообщениям общего чата и именам файлов компании.
+Дополнительно после закрытия App Store блокеров реализованы:
+
+```text
+1. GET /api/companies/{companyId}/search?userId={userId}&query={text}&limit=20
+2. POST /api/companies/{companyId}/ai/ask?userId={userId}
+3. GET /api/companies/{companyId}/ai/director/summary/today?userId={userId}
+```
+
+Search API используется для поиска по сообщениям общего чата и именам файлов компании.
+
+AI endpoints пока работают в mock-режиме и нужны для подключения экрана AI Director во Flutter. Настоящая OpenAI-интеграция будет отдельным этапом.
 
 ---
 
@@ -214,7 +224,9 @@ flutter test --tags live --run-skipped test/live_backend_test.dart
 11. POST /api/companies/{companyId}/chats/general/messages/file
 12. POST /api/companies/{companyId}/chats/general/read?userId=...
 13. GET /api/companies/{companyId}/search?userId=...&query=...&limit=20
-14. DELETE /api/users/me?userId=...
+14. GET /api/companies/{companyId}/ai/director/summary/today?userId=...
+15. POST /api/companies/{companyId}/ai/ask?userId=...
+16. DELETE /api/users/me?userId=...
 ```
 
 ---
@@ -256,7 +268,75 @@ FILE    — найден файл компании по originalFileName
 
 ---
 
-# 8. Prod env без секретов
+# 8. Дополнительная проверка AI mock API
+
+AI mock API не является App Store blocker, но уже доступен на prod и может быть подключён клиентом для экрана AI Director.
+
+## 8.1. Проверка AI summary
+
+Endpoint:
+
+```http
+GET /api/companies/{companyId}/ai/director/summary/today?userId={userId}
+```
+
+Проверка на prod:
+
+```bash
+curl -X GET \
+  "https://birchat-backend.onrender.com/api/companies/{companyId}/ai/director/summary/today?userId={userId}" \
+  -H "accept: application/json"
+```
+
+Ожидаемо возвращается объект со следующими полями:
+
+```text
+title
+summary
+items
+createdAt
+```
+
+## 8.2. Проверка AI ask
+
+Endpoint:
+
+```http
+POST /api/companies/{companyId}/ai/ask?userId={userId}
+```
+
+Проверка на prod:
+
+```bash
+curl -X POST \
+  "https://birchat-backend.onrender.com/api/companies/{companyId}/ai/ask?userId={userId}" \
+  -H "Content-Type: application/json" \
+  -H "accept: application/json" \
+  -d '{
+    "question": "Что сегодня было в компании?"
+  }'
+```
+
+Ожидаемо возвращается объект со следующими полями:
+
+```text
+answer
+model = mock
+createdAt
+```
+
+Ошибки:
+
+```text
+400 VALIDATION — question пустой или превышает 5000 символов
+403 NOT_A_MEMBER — пользователь не состоит в компании
+```
+
+Важно: это mock endpoint. Текст ответа не является бизнес-контрактом. Flutter должен ориентироваться на структуру полей, а не на конкретный текст `answer`, `summary` или `items`.
+
+---
+
+# 9. Prod env без секретов
 
 На Render должны быть настроены переменные:
 
