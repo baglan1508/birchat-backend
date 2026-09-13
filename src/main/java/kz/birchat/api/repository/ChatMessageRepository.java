@@ -134,4 +134,18 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
             @Param("lastReadCreatedAt") LocalDateTime lastReadCreatedAt,
             @Param("lastReadMessageId") UUID lastReadMessageId
     );
+    @Query("""
+    SELECT m FROM ChatMessageEntity m
+    JOIN FETCH m.user u
+    WHERE m.company.id = :companyId
+      AND m.isDeleted = false
+      AND m.content IS NOT NULL
+      AND LOWER(m.content) LIKE LOWER(CONCAT('%', :query, '%'))
+    ORDER BY m.createdAt DESC, m.id DESC
+    """)
+    List<ChatMessageEntity> searchMessages(
+            @Param("companyId") UUID companyId,
+            @Param("query") String query,
+            Pageable pageable
+    );
 }
