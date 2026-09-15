@@ -1,6 +1,6 @@
 # BirChat Backend · App Store Readiness
 
-Дата обновления: `2026-09-13`
+Дата обновления: `2026-09-15`
 Backend prod: `https://birchat-backend.onrender.com`
 Swagger prod: `https://birchat-backend.onrender.com/swagger-ui.html`
 
@@ -21,11 +21,12 @@ Swagger prod: `https://birchat-backend.onrender.com/swagger-ui.html`
 1. GET /api/companies/{companyId}/search?userId={userId}&query={text}&limit=20
 2. POST /api/companies/{companyId}/ai/ask?userId={userId}
 3. GET /api/companies/{companyId}/ai/director/summary/today?userId={userId}
+4. GET /api/companies/{companyId}/ai/history?userId={userId}&limit=50
 ```
 
 Search API используется для поиска по сообщениям общего чата и именам файлов компании.
 
-AI endpoints пока работают в mock-режиме и нужны для подключения экрана AI Director во Flutter. Настоящая OpenAI-интеграция будет отдельным этапом.
+AI endpoints пока работают в mock-режиме и нужны для подключения экрана AI Director во Flutter. С версии v0.8 история AI-диалога сохраняется в PostgreSQL/Neon. Настоящая OpenAI-интеграция будет отдельным этапом.
 
 ---
 
@@ -226,7 +227,8 @@ flutter test --tags live --run-skipped test/live_backend_test.dart
 13. GET /api/companies/{companyId}/search?userId=...&query=...&limit=20
 14. GET /api/companies/{companyId}/ai/director/summary/today?userId=...
 15. POST /api/companies/{companyId}/ai/ask?userId=...
-16. DELETE /api/users/me?userId=...
+16. GET /api/companies/{companyId}/ai/history?userId=...&limit=50
+17. DELETE /api/users/me?userId=...
 ```
 
 ---
@@ -268,9 +270,11 @@ FILE    — найден файл компании по originalFileName
 
 ---
 
-# 8. Дополнительная проверка AI mock API
+# 8. Дополнительная проверка AI mock + history API
 
 AI mock API не является App Store blocker, но уже доступен на prod и может быть подключён клиентом для экрана AI Director.
+
+С версии `v0.8` backend сохраняет историю AI-диалога в PostgreSQL/Neon.
 
 ## 8.1. Проверка AI summary
 
@@ -283,9 +287,7 @@ GET /api/companies/{companyId}/ai/director/summary/today?userId={userId}
 Проверка на prod:
 
 ```bash
-curl -X GET \
-  "https://birchat-backend.onrender.com/api/companies/{companyId}/ai/director/summary/today?userId={userId}" \
-  -H "accept: application/json"
+curl -X GET   "https://birchat-backend.onrender.com/api/companies/{companyId}/ai/director/summary/today?userId={userId}"   -H "accept: application/json"
 ```
 
 Ожидаемо возвращается объект со следующими полями:
@@ -308,11 +310,7 @@ POST /api/companies/{companyId}/ai/ask?userId={userId}
 Проверка на prod:
 
 ```bash
-curl -X POST \
-  "https://birchat-backend.onrender.com/api/companies/{companyId}/ai/ask?userId={userId}" \
-  -H "Content-Type: application/json" \
-  -H "accept: application/json" \
-  -d '{
+curl -X POST   "https://birchat-backend.onrender.com/api/companies/{companyId}/ai/ask?userId={userId}"   -H "Content-Type: application/json"   -H "accept: application/json"   -d '{
     "question": "Что сегодня было в компании?"
   }'
 ```
@@ -320,15 +318,64 @@ curl -X POST \
 Ожидаемо возвращается объект со следующими полями:
 
 ```text
+threadId
+messageId
 answer
 model = mock
 createdAt
 ```
 
+После успешного вызова в БД должны появиться 2 сообщения AI-чата:
+
+```text
+role = USER       — вопрос пользователя
+role = ASSISTANT  — mock-ответ AI
+```
+
+## 8.3. Проверка AI history
+
+Endpoint:
+
+```http
+GET /api/companies/{companyId}/ai/history?userId={userId}&limit=50
+```
+
+Проверка на prod:
+
+```bash
+curl -X GET   "https://birchat-backend.onrender.com/api/companies/{companyId}/ai/history?userId={userId}&limit=50"   -H "accept: application/json"
+```
+
+Ожидаемо возвращается объект:
+
+```text
+threadId
+messages
+```
+
+Каждый элемент `messages` содержит:
+
+```text
+id
+role = USER / ASSISTANT
+content
+model
+createdAt
+```
+
+Если пользователь ещё не задавал вопросы AI, ожидаемо:
+
+```json
+{
+  "threadId": null,
+  "messages": []
+}
+```
+
 Ошибки:
 
 ```text
-400 VALIDATION — question пустой или превышает 5000 символов
+400 VALIDATION — question пустой, question превышает 5000 символов или limit меньше 1
 403 NOT_A_MEMBER — пользователь не состоит в компании
 ```
 

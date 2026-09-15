@@ -1,7 +1,7 @@
 # BirChat Backend API для Flutter Frontend
 
-Версия: `v0.7 MVP`
-Дата обновления: `2026-09-13`
+Версия: `v0.8 MVP`
+Дата обновления: `2026-09-15`
 Backend: `Java Spring Boot`
 Database: `PostgreSQL / Neon`
 File Storage: `Supabase Storage`
@@ -35,6 +35,51 @@ Health check:
 ```http
 GET /api/health
 ```
+
+---
+
+# Changelog backend v0.8
+
+## Добавлено в v0.8
+
+### AI history storage
+
+AI mock endpoints теперь сохраняют историю диалога в PostgreSQL/Neon.
+
+Добавлен новый endpoint получения истории AI-чата:
+
+```http
+GET /api/companies/{companyId}/ai/history?userId={userId}&limit=50
+```
+
+Изменён response у `POST /api/companies/{companyId}/ai/ask`.
+
+Теперь ответ дополнительно содержит:
+
+```text
+threadId
+messageId
+```
+
+Логика `POST /ai/ask` теперь такая:
+
+```text
+1. Backend проверяет, что userId является active-участником компании.
+2. Backend находит или создаёт default AI-thread для пары companyId + userId.
+3. Сохраняет вопрос пользователя как AI message с role = USER.
+4. Генерирует mock-ответ.
+5. Сохраняет ответ AI как AI message с role = ASSISTANT и model = mock.
+6. Возвращает ответ Flutter.
+```
+
+Новые таблицы:
+
+```text
+birchat.ai_threads
+birchat.ai_messages
+```
+
+Важно для Flutter: AI всё ещё работает в mock-режиме, но история уже сохраняется и может отображаться как обычный AI-чат.
 
 ---
 
@@ -339,6 +384,7 @@ Backend приводит телефон к формату:
 * даты возвращаются в UTC с `Z`;
 * файлы хранятся в Supabase Storage, metadata файлов — в PostgreSQL/Neon;
 * реализован поиск по сообщениям общего чата и именам файлов компании;
+* AI mock endpoints сохраняют историю диалога в PostgreSQL/Neon;
 * prod backend работает на платном Render-инстансе без sleep.
 
 Позже `userId` и `actorUserId` будут заменены на получение пользователя из JWT-токена.
@@ -1390,9 +1436,18 @@ GET /api/companies/{companyId}/files/{fileId}/download-url?userId={userId}
 
 ---
 
-# 8. AI Director mock
+# 8. AI Director mock + history
 
 На текущем этапе AI работает в mock-режиме. Это нужно, чтобы Flutter уже мог подключить экран AI Director, не ожидая настоящей OpenAI-интеграции.
+
+С версии `v0.8` история AI-диалога сохраняется в PostgreSQL/Neon:
+
+```text
+birchat.ai_threads  — AI-диалог пользователя внутри компании
+birchat.ai_messages — сообщения USER и ASSISTANT внутри AI-диалога
+```
+
+Важно: текст ответа пока mock. Но структура API уже близка к будущей OpenAI-интеграции.
 
 ## 8.1. Задать вопрос AI
 
@@ -1420,9 +1475,15 @@ POST /api/companies/{companyId}/ai/ask?userId={userId}
 
 ```json
 {
-  "answer": "AI mock: я пока работаю в тестовом режиме.\nПозже здесь будет ответ на основе сообщений, файлов и памяти компании.\n\nВаш вопрос: Что сегодня было в компании?\n",
+  "threadId": "thread-uuid",
+  "messageId": "assistant-message-uuid",
+  "answer": "AI mock: я пока работаю в тестовом режиме.
+Позже здесь будет ответ на основе сообщений, файлов и памяти компании.
+
+Ваш вопрос: Что сегодня было в компании?
+",
   "model": "mock",
-  "createdAt": "2026-09-13T16:55:00Z"
+  "createdAt": "2026-09-15T15:45:00Z"
 }
 ```
 
@@ -1430,9 +1491,23 @@ POST /api/companies/{companyId}/ai/ask?userId={userId}
 
 | field | type | description |
 |---|---|---|
+| threadId | UUID | ID default AI-thread пользователя внутри компании |
+| messageId | UUID | ID сохранённого сообщения AI с role = `ASSISTANT` |
 | answer | string | Ответ AI для отображения пользователю |
 | model | string | На текущем этапе всегда `mock` |
 | createdAt | datetime | Дата создания ответа в UTC с `Z` |
+
+### Логика
+
+```text
+1. Backend проверяет, что userId является active-участником компании.
+2. Находит default AI-thread для companyId + userId.
+3. Если thread ещё нет — создаёт его.
+4. Сохраняет вопрос пользователя в ai_messages с role = USER.
+5. Генерирует mock-ответ.
+6. Сохраняет mock-ответ в ai_messages с role = ASSISTANT и model = mock.
+7. Возвращает threadId, messageId, answer, model, createdAt.
+```
 
 ### Ограничения
 
@@ -1451,7 +1526,9 @@ question не должен превышать 5000 символов
 
 ### Использование во Flutter
 
-Используется на экране AI Director, когда пользователь отправляет вопрос. Сейчас ответ можно показывать как обычное сообщение AI.
+Используется на экране AI Director, когда пользователь отправляет вопрос. Ответ можно показать как новое сообщение AI.
+
+После успешного ответа Flutter может либо сразу добавить `answer` в локальный список сообщений, либо заново запросить историю через `GET /ai/history`.
 
 ---
 
@@ -1487,7 +1564,7 @@ GET /api/companies/5479c4a8-f805-4d0d-bbc8-87a45af85b93/ai/director/summary/toda
     "Память компании будет добавлена отдельным этапом",
     "Интеграция с OpenAI будет подключена после mock-этапа"
   ],
-  "createdAt": "2026-09-13T16:55:00Z"
+  "createdAt": "2026-09-15T15:45:00Z"
 }
 ```
 
@@ -1511,6 +1588,105 @@ GET /api/companies/5479c4a8-f805-4d0d-bbc8-87a45af85b93/ai/director/summary/toda
 Используется для первого экрана AI Director или блока “Сводка за сегодня”.
 
 Важно: текущий endpoint возвращает mock-данные. Не нужно строить бизнес-логику на конкретном тексте `summary` и `items`, потому что после подключения OpenAI содержимое ответа изменится.
+
+---
+
+## 8.3. Получить историю AI-чата
+
+### Endpoint
+
+```http
+GET /api/companies/{companyId}/ai/history?userId={userId}&limit=50
+```
+
+### Query params
+
+| name | type | required | description |
+|---|---|---|---|
+| userId | UUID | yes | ID текущего пользователя |
+| limit | int | no | Максимум сообщений. Default `50`, max `100` |
+
+### Example
+
+```http
+GET /api/companies/5479c4a8-f805-4d0d-bbc8-87a45af85b93/ai/history?userId=598586f3-9c44-4eb0-9c65-f280cb5eee85&limit=50
+```
+
+### Response
+
+```json
+{
+  "threadId": "thread-uuid",
+  "messages": [
+    {
+      "id": "user-message-uuid",
+      "role": "USER",
+      "content": "Что сегодня было в компании?",
+      "model": null,
+      "createdAt": "2026-09-15T15:44:59Z"
+    },
+    {
+      "id": "assistant-message-uuid",
+      "role": "ASSISTANT",
+      "content": "AI mock: я пока работаю в тестовом режиме...",
+      "model": "mock",
+      "createdAt": "2026-09-15T15:45:00Z"
+    }
+  ]
+}
+```
+
+Если истории ещё нет, backend возвращает:
+
+```json
+{
+  "threadId": null,
+  "messages": []
+}
+```
+
+### Поля ответа
+
+| field | type | description |
+|---|---|---|
+| threadId | UUID/null | ID default AI-thread. `null`, если пользователь ещё не задавал вопросы AI |
+| messages | array | Список сообщений AI-чата в порядке старые → новые |
+| messages[].id | UUID | ID AI-сообщения |
+| messages[].role | string | `USER` или `ASSISTANT` |
+| messages[].content | string | Текст вопроса или ответа |
+| messages[].model | string/null | Для `ASSISTANT` сейчас `mock`, для `USER` — `null` |
+| messages[].createdAt | datetime | Дата создания сообщения в UTC с `Z` |
+
+### Логика
+
+```text
+1. Backend проверяет, что userId является active-участником компании.
+2. Ищет default AI-thread для companyId + userId.
+3. Если thread нет — возвращает threadId = null и messages = [].
+4. Если thread есть — возвращает последние limit сообщений.
+5. Сообщения возвращаются в порядке старые → новые.
+```
+
+### Ошибки
+
+```text
+400 VALIDATION — limit меньше 1
+403 NOT_A_MEMBER — пользователь не состоит в компании
+```
+
+### Использование во Flutter
+
+Используется при открытии экрана AI Director, чтобы восстановить историю переписки пользователя с AI внутри выбранной компании.
+
+Рекомендуемый flow:
+
+```text
+1. Открыть AI Director screen.
+2. Вызвать GET /ai/history?userId=...&limit=50.
+3. Показать messages как чат.
+4. При отправке вопроса вызвать POST /ai/ask.
+5. Добавить ответ в список или повторно вызвать GET /ai/history.
+```
 
 ---
 
@@ -1851,6 +2027,7 @@ GET  /api/companies/{companyId}/search?userId={userId}&query={text}&limit=20
 AI:
 POST /api/companies/{companyId}/ai/ask?userId={userId}
 GET  /api/companies/{companyId}/ai/director/summary/today?userId={userId}
+GET  /api/companies/{companyId}/ai/history?userId={userId}&limit=50
 
 Employees:
 GET  /api/companies/{companyId}/employees?userId={userId}
@@ -1864,6 +2041,12 @@ POST /api/companies/{companyId}/employees?actorUserId={actorUserId}
 Следующие API будут добавляться по мере разработки:
 
 ```text
+Настоящая OpenAI-интеграция:
+POST /api/companies/{companyId}/ai/ask будет возвращать реальный AI-ответ вместо mock
+
+AI context / company memory:
+поиск релевантных сообщений и файлов для ответа AI
+
 История отправок:
 GET  /api/companies/{companyId}/share-history
 POST /api/companies/{companyId}/share-history
@@ -1885,7 +2068,7 @@ PUT /api/companies/{companyId}/settings
 * временно используется `userId` в query-параметрах;
 * для добавления сотрудника временно используется `actorUserId`;
 * нет WebSocket;
-* нет настоящей OpenAI-интеграции; AI endpoints пока работают в mock-режиме;
+* нет настоящей OpenAI-интеграции; AI работает в mock-режиме, но история AI уже сохраняется;
 * нет истории отправок;
 * нет настроек компании;
 * нет ролей на уровне permissions;
@@ -1899,7 +2082,8 @@ PUT /api/companies/{companyId}/settings
 * файлы загружаются через backend в Supabase Storage;
 * для открытия private-файла используется `/download-url`;
 * поиск по сообщениям общего чата и именам файлов компании;
-* AI mock endpoints для экрана AI Director.
+* AI mock endpoints для экрана AI Director;
+* хранение истории AI-диалога в PostgreSQL/Neon.
 
 ---
 
@@ -1917,17 +2101,18 @@ Frontend может подключать backend в таком порядке:
 8. выбрать компанию;
 9. `GET /api/companies/{companyId}/home?userId=...`;
 10. открыть экран AI Director при необходимости;
-11. получить сводку через `GET /api/companies/{companyId}/ai/director/summary/today?userId=...`;
-12. отправлять вопрос через `POST /api/companies/{companyId}/ai/ask?userId=...`;
-13. открыть чат;
-14. `GET /api/companies/{companyId}/chats/general/messages?userId=...&limit=50`;
-15. отправлять текст через `POST /api/companies/{companyId}/chats/general/messages`;
-16. загружать файл через `POST /api/companies/{companyId}/files/upload?userId=...`;
-17. отправлять файл в чат через `POST /api/companies/{companyId}/chats/general/messages/file`;
-18. при открытии файла получать временную ссылку через `/download-url`;
-19. искать сообщения и файлы через `GET /api/companies/{companyId}/search?userId=...&query=...`;
-20. при просмотре чата отмечать прочтение через `POST /api/companies/{companyId}/chats/general/read?userId=...`;
-21. на экране профиля удалять аккаунт через `DELETE /api/users/me?userId=...`.
+11. восстановить историю через `GET /api/companies/{companyId}/ai/history?userId=...&limit=50`;
+12. получить сводку через `GET /api/companies/{companyId}/ai/director/summary/today?userId=...`;
+13. отправлять вопрос через `POST /api/companies/{companyId}/ai/ask?userId=...`;
+14. открыть чат;
+15. `GET /api/companies/{companyId}/chats/general/messages?userId=...&limit=50`;
+16. отправлять текст через `POST /api/companies/{companyId}/chats/general/messages`;
+17. загружать файл через `POST /api/companies/{companyId}/files/upload?userId=...`;
+18. отправлять файл в чат через `POST /api/companies/{companyId}/chats/general/messages/file`;
+19. при открытии файла получать временную ссылку через `/download-url`;
+20. искать сообщения и файлы через `GET /api/companies/{companyId}/search?userId=...&query=...`;
+21. при просмотре чата отмечать прочтение через `POST /api/companies/{companyId}/chats/general/read?userId=...`;
+22. на экране профиля удалять аккаунт через `DELETE /api/users/me?userId=...`.
 
 Для auth-flow после v0.5 важно:
 
@@ -1963,8 +2148,10 @@ HomeScreen
     ↓ показывает aiDirector.available
 
 AiDirectorScreen
+    ↓ GET /api/companies/{companyId}/ai/history?userId=...&limit=50
     ↓ GET /api/companies/{companyId}/ai/director/summary/today?userId=...
     ↓ POST /api/companies/{companyId}/ai/ask?userId=...
+    ↓ response contains threadId and messageId
 
 ChatScreen
     ↓ GET /api/companies/{companyId}/chats/general/messages?userId=...&limit=50
