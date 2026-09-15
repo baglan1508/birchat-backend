@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import kz.birchat.api.dto.AiAskRequest;
 import kz.birchat.api.dto.AiAskResponse;
 import kz.birchat.api.dto.AiDirectorSummaryResponse;
+import kz.birchat.api.dto.AiHistoryResponse;
 import kz.birchat.api.service.AiService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -38,6 +39,19 @@ public class AiController {
         return aiService.getTodayDirectorSummary(
                 companyId,
                 userId
+        );
+    }
+
+    @GetMapping("/history")
+    public AiHistoryResponse getHistory(
+            @PathVariable UUID companyId,
+            @RequestParam UUID userId,
+            @RequestParam(defaultValue = "50") Integer limit
+    ) {
+        return aiService.getHistory(
+                companyId,
+                userId,
+                limit
         );
     }
 }

@@ -1,16 +1,29 @@
 package kz.birchat.api.service;
 
+import jakarta.persistence.EntityManager;
 import kz.birchat.api.dto.AiAskRequest;
 import kz.birchat.api.dto.AiAskResponse;
 import kz.birchat.api.dto.AiDirectorSummaryResponse;
+import kz.birchat.api.dto.AiHistoryMessageResponse;
+import kz.birchat.api.dto.AiHistoryResponse;
+import kz.birchat.api.entity.AiMessageEntity;
+import kz.birchat.api.entity.AiThreadEntity;
+import kz.birchat.api.entity.CompanyEntity;
+import kz.birchat.api.entity.UserEntity;
+import kz.birchat.api.enums.AiMessageRole;
 import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
+import kz.birchat.api.repository.AiMessageRepository;
+import kz.birchat.api.repository.AiThreadRepository;
 import kz.birchat.api.repository.CompanyMemberRepository;
 import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
@@ -20,10 +33,15 @@ public class AiService {
 
     private static final String STATUS_ACTIVE = "ACTIVE";
     private static final String MOCK_MODEL = "mock";
+    private static final int DEFAULT_HISTORY_LIMIT = 50;
+    private static final int MAX_HISTORY_LIMIT = 100;
 
     private final CompanyMemberRepository companyMemberRepository;
+    private final AiThreadRepository aiThreadRepository;
+    private final AiMessageRepository aiMessageRepository;
+    private final EntityManager entityManager;
 
-    @Transactional(readOnly = true)
+    @Transactional
     public AiAskResponse ask(
             UUID companyId,
             UUID userId,
@@ -32,18 +50,43 @@ public class AiService {
         checkActiveMember(companyId, userId);
 
         String question = normalizeQuestion(request);
+        LocalDateTime now = TimeUtils.utcNow();
 
-        String answer = """
-                AI mock: я пока работаю в тестовом режиме.
-                Позже здесь будет ответ на основе сообщений, файлов и памяти компании.
+        AiThreadEntity thread = getOrCreateDefaultThread(
+                companyId,
+                userId,
+                question,
+                now
+        );
 
-                Ваш вопрос: %s
-                """.formatted(question);
+        saveMessage(
+                thread,
+                AiMessageRole.USER,
+                question,
+                null,
+                now
+        );
 
-        return new AiAskResponse(
+        String answer = buildMockAnswer(question);
+        LocalDateTime answerCreatedAt = TimeUtils.utcNow();
+
+        AiMessageEntity assistantMessage = saveMessage(
+                thread,
+                AiMessageRole.ASSISTANT,
                 answer,
                 MOCK_MODEL,
-                TimeUtils.utcOffsetNow()
+                answerCreatedAt
+        );
+
+        thread.setUpdatedAt(answerCreatedAt);
+        aiThreadRepository.save(thread);
+
+        return new AiAskResponse(
+                thread.getId(),
+                assistantMessage.getId(),
+                answer,
+                MOCK_MODEL,
+                TimeUtils.toUtcOffset(answerCreatedAt)
         );
     }
 
@@ -65,6 +108,132 @@ public class AiService {
                 ),
                 TimeUtils.utcOffsetNow()
         );
+    }
+
+    @Transactional(readOnly = true)
+    public AiHistoryResponse getHistory(
+            UUID companyId,
+            UUID userId,
+            Integer limit
+    ) {
+        checkActiveMember(companyId, userId);
+
+        int safeLimit = normalizeHistoryLimit(limit);
+
+        return aiThreadRepository.findDefaultThread(companyId, userId)
+                .map(thread -> {
+                    List<AiHistoryMessageResponse> messages = aiMessageRepository
+                            .findLatestByThreadId(
+                                    thread.getId(),
+                                    PageRequest.of(0, safeLimit)
+                            )
+                            .stream()
+                            .sorted(Comparator.comparing(AiMessageEntity::getCreatedAt)
+                                    .thenComparing(AiMessageEntity::getId))
+                            .map(this::toHistoryMessageResponse)
+                            .toList();
+
+                    return new AiHistoryResponse(
+                            thread.getId(),
+                            messages
+                    );
+                })
+                .orElseGet(() -> new AiHistoryResponse(
+                        null,
+                        List.of()
+                ));
+    }
+
+    private AiThreadEntity getOrCreateDefaultThread(
+            UUID companyId,
+            UUID userId,
+            String question,
+            LocalDateTime now
+    ) {
+        return aiThreadRepository.findDefaultThread(companyId, userId)
+                .orElseGet(() -> createDefaultThread(
+                        companyId,
+                        userId,
+                        question,
+                        now
+                ));
+    }
+
+    private AiThreadEntity createDefaultThread(
+            UUID companyId,
+            UUID userId,
+            String question,
+            LocalDateTime now
+    ) {
+        CompanyEntity companyRef = entityManager.getReference(
+                CompanyEntity.class,
+                companyId
+        );
+
+        UserEntity userRef = entityManager.getReference(
+                UserEntity.class,
+                userId
+        );
+
+        AiThreadEntity thread = new AiThreadEntity();
+        thread.setId(UUID.randomUUID());
+        thread.setCompany(companyRef);
+        thread.setUser(userRef);
+        thread.setTitle(buildThreadTitle(question));
+        thread.setDefaultThread(true);
+        thread.setCreatedAt(now);
+        thread.setUpdatedAt(now);
+
+        return aiThreadRepository.save(thread);
+    }
+
+    private AiMessageEntity saveMessage(
+            AiThreadEntity thread,
+            AiMessageRole role,
+            String content,
+            String model,
+            LocalDateTime createdAt
+    ) {
+        AiMessageEntity message = new AiMessageEntity();
+        message.setId(UUID.randomUUID());
+        message.setThread(thread);
+        message.setCompany(thread.getCompany());
+        message.setUser(thread.getUser());
+        message.setRole(role);
+        message.setContent(content);
+        message.setModel(model);
+        message.setCreatedAt(createdAt);
+
+        return aiMessageRepository.save(message);
+    }
+
+    private AiHistoryMessageResponse toHistoryMessageResponse(AiMessageEntity message) {
+        return new AiHistoryMessageResponse(
+                message.getId(),
+                message.getRole().name(),
+                message.getContent(),
+                message.getModel(),
+                TimeUtils.toUtcOffset(message.getCreatedAt())
+        );
+    }
+
+    private String buildMockAnswer(String question) {
+        return """
+                AI mock: я пока работаю в тестовом режиме.
+                Позже здесь будет ответ на основе сообщений, файлов и памяти компании.
+
+                Ваш вопрос: %s
+                """.formatted(question);
+    }
+
+    private String buildThreadTitle(String question) {
+        String normalized = question.trim();
+
+        if (normalized.length() <= 60) {
+            return normalized;
+        }
+
+        return normalized.substring(0, 60) + "...";
     }
 
     private void checkActiveMember(UUID companyId, UUID userId) {
@@ -100,5 +269,20 @@ public class AiService {
         }
 
         return question;
+    }
+
+    private int normalizeHistoryLimit(Integer limit) {
+        if (limit == null) {
+            return DEFAULT_HISTORY_LIMIT;
+        }
+
+        if (limit < 1) {
+            throw ApiException.badRequest(
+                    ApiErrorCode.VALIDATION,
+                    "limit должен быть больше 0"
+            );
+        }
+
+        return Math.min(limit, MAX_HISTORY_LIMIT);
     }
 }
