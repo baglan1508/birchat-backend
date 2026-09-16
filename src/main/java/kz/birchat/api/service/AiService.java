@@ -1,6 +1,10 @@
 package kz.birchat.api.service;
 
 import jakarta.persistence.EntityManager;
+import kz.birchat.api.ai.AiProvider;
+import kz.birchat.api.ai.AiProviderRequest;
+import kz.birchat.api.ai.AiProviderResolver;
+import kz.birchat.api.ai.AiProviderResponse;
 import kz.birchat.api.dto.AiAskRequest;
 import kz.birchat.api.dto.AiAskResponse;
 import kz.birchat.api.dto.AiDirectorSummaryResponse;
@@ -32,13 +36,13 @@ import java.util.UUID;
 public class AiService {
 
     private static final String STATUS_ACTIVE = "ACTIVE";
-    private static final String MOCK_MODEL = "mock";
     private static final int DEFAULT_HISTORY_LIMIT = 50;
     private static final int MAX_HISTORY_LIMIT = 100;
 
     private final CompanyMemberRepository companyMemberRepository;
     private final AiThreadRepository aiThreadRepository;
     private final AiMessageRepository aiMessageRepository;
+    private final AiProviderResolver aiProviderResolver;
     private final EntityManager entityManager;
 
     @Transactional
@@ -67,14 +71,26 @@ public class AiService {
                 now
         );
 
-        String answer = buildMockAnswer(question);
+        AiProvider provider = aiProviderResolver.resolve();
+
+        AiProviderResponse providerResponse = provider.ask(
+                new AiProviderRequest(
+                        companyId,
+                        userId,
+                        question
+                )
+        );
+
+        String answer = providerResponse.answer();
+        String model = providerResponse.model();
+
         LocalDateTime answerCreatedAt = TimeUtils.utcNow();
 
         AiMessageEntity assistantMessage = saveMessage(
                 thread,
                 AiMessageRole.ASSISTANT,
                 answer,
-                MOCK_MODEL,
+                model,
                 answerCreatedAt
         );
 
@@ -85,7 +101,7 @@ public class AiService {
                 thread.getId(),
                 assistantMessage.getId(),
                 answer,
-                MOCK_MODEL,
+                model,
                 TimeUtils.toUtcOffset(answerCreatedAt)
         );
     }
@@ -104,7 +120,7 @@ public class AiService {
                         "Сообщения общего чата будут анализироваться позже",
                         "Файлы компании будут учитываться позже",
                         "Память компании будет добавлена отдельным этапом",
-                        "Интеграция с OpenAI будет подключена после mock-этапа"
+                        "Интеграция с реальным AI provider будет подключена постепенно"
                 ),
                 TimeUtils.utcOffsetNow()
         );
@@ -215,15 +231,6 @@ public class AiService {
                 message.getModel(),
                 TimeUtils.toUtcOffset(message.getCreatedAt())
         );
-    }
-
-    private String buildMockAnswer(String question) {
-        return """
-                AI mock: я пока работаю в тестовом режиме.
-                Позже здесь будет ответ на основе сообщений, файлов и памяти компании.
-
-                Ваш вопрос: %s
-                """.formatted(question);
     }
 
     private String buildThreadTitle(String question) {

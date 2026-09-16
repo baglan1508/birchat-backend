@@ -44,3 +44,12 @@ sms:
     password: ${SMSC_PASSWORD:}
     api-key: ${SMSC_API_KEY:}
     sender: ${SMSC_SENDER:}
+
+ai:
+  provider: ${AI_PROVIDER:mock}
+  glm:
+    api-key: ${AI_GLM_API_KEY:}
+    model: ${AI_GLM_MODEL:glm-4.5-air}
+    base-url: ${AI_GLM_BASE_URL:https://api.z.ai/api/paas/v4}
+    max-tokens: ${AI_GLM_MAX_TOKENS:1024}
+    temperature: ${AI_GLM_TEMPERATURE:0.6}
