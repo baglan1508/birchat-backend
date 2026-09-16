@@ -1,7 +1,7 @@
 # BirChat Backend API для Flutter Frontend
 
-Версия: `v0.8 MVP`
-Дата обновления: `2026-09-15`
+Версия: `v0.9 MVP`
+Дата обновления: `2026-09-16`
 Backend: `Java Spring Boot`
 Database: `PostgreSQL / Neon`
 File Storage: `Supabase Storage`
@@ -38,13 +38,77 @@ GET /api/health
 
 ---
 
+# Changelog backend v0.9
+
+## Добавлено в v0.9
+
+### Universal AI provider + GLM
+
+`POST /api/companies/{companyId}/ai/ask` теперь может работать с реальным AI provider.
+
+Поддерживаемые режимы backend:
+
+```text
+AI_PROVIDER=mock  — тестовый режим, старый mock-ответ
+AI_PROVIDER=glm   — реальный ответ через Z.AI / GLM
+```
+
+Текущая prod-модель:
+
+```text
+glm-4.5-air
+```
+
+Контракт для Flutter не изменился:
+
+```http
+POST /api/companies/{companyId}/ai/ask?userId={userId}
+```
+
+Response по-прежнему содержит:
+
+```text
+threadId
+messageId
+answer
+model
+createdAt
+```
+
+Главное изменение: поле `answer` теперь может содержать реальный ответ AI, а поле `model` может быть не только `mock`, но и `glm-4.5-air` или другой моделью, настроенной на backend.
+
+Логика `POST /ai/ask` теперь такая:
+
+```text
+1. Backend проверяет, что userId является active-участником компании.
+2. Backend находит или создаёт default AI-thread для пары companyId + userId.
+3. Сохраняет вопрос пользователя как AI message с role = USER.
+4. Выбирает AI provider по настройке AI_PROVIDER.
+5. Если AI_PROVIDER=mock — генерирует тестовый mock-ответ.
+6. Если AI_PROVIDER=glm — отправляет запрос во внешний AI provider Z.AI / GLM.
+7. Сохраняет ответ AI как AI message с role = ASSISTANT и фактическим model.
+8. Возвращает ответ Flutter.
+```
+
+Важно для Flutter:
+
+```text
+1. Endpoint, request body и структура response не изменились.
+2. Flutter не должен завязываться на конкретный текст answer.
+3. Flutter может отображать model как техническое поле или не показывать пользователю.
+4. AI пока не получает контекст сообщений, файлов и памяти компании.
+5. GET /ai/director/summary/today пока остаётся mock-сводкой и будет улучшен отдельным этапом.
+```
+
+---
+
 # Changelog backend v0.8
 
 ## Добавлено в v0.8
 
 ### AI history storage
 
-AI mock endpoints теперь сохраняют историю диалога в PostgreSQL/Neon.
+На момент v0.8 AI mock endpoints начали сохранять историю диалога в PostgreSQL/Neon.
 
 Добавлен новый endpoint получения истории AI-чата:
 
@@ -79,7 +143,7 @@ birchat.ai_threads
 birchat.ai_messages
 ```
 
-Важно для Flutter: AI всё ещё работает в mock-режиме, но история уже сохраняется и может отображаться как обычный AI-чат.
+Важно для Flutter на момент v0.8: AI ещё работал в mock-режиме, но история уже сохранялась и могла отображаться как обычный AI-чат.
 
 ---
 
@@ -96,7 +160,7 @@ POST /api/companies/{companyId}/ai/ask?userId={userId}
 GET  /api/companies/{companyId}/ai/director/summary/today?userId={userId}
 ```
 
-На текущем этапе это не настоящая OpenAI-интеграция. Backend возвращает тестовые mock-ответы, но контракт уже можно подключать во Flutter.
+На момент v0.7 это был mock-контракт без реального AI provider. Backend возвращал тестовые mock-ответы, но контракт уже можно было подключать во Flutter.
 
 Общие правила:
 
@@ -384,7 +448,7 @@ Backend приводит телефон к формату:
 * даты возвращаются в UTC с `Z`;
 * файлы хранятся в Supabase Storage, metadata файлов — в PostgreSQL/Neon;
 * реализован поиск по сообщениям общего чата и именам файлов компании;
-* AI mock endpoints сохраняют историю диалога в PostgreSQL/Neon;
+* `POST /ai/ask` может возвращать реальный AI-ответ через GLM, история AI-диалога сохраняется в PostgreSQL/Neon;
 * prod backend работает на платном Render-инстансе без sleep.
 
 Позже `userId` и `actorUserId` будут заменены на получение пользователя из JWT-токена.
@@ -1436,18 +1500,31 @@ GET /api/companies/{companyId}/files/{fileId}/download-url?userId={userId}
 
 ---
 
-# 8. AI Director mock + history
+# 8. AI Director + real AI provider + history
 
-На текущем этапе AI работает в mock-режиме. Это нужно, чтобы Flutter уже мог подключить экран AI Director, не ожидая настоящей OpenAI-интеграции.
+С версии `v0.9` endpoint `POST /api/companies/{companyId}/ai/ask` может работать с реальным AI provider.
 
-С версии `v0.8` история AI-диалога сохраняется в PostgreSQL/Neon:
+На prod сейчас используется режим:
+
+```text
+AI_PROVIDER=glm
+AI_GLM_MODEL=glm-4.5-air
+```
+
+При необходимости backend можно переключить обратно в mock-режим без изменения Flutter-контракта:
+
+```text
+AI_PROVIDER=mock
+```
+
+История AI-диалога сохраняется в PostgreSQL/Neon:
 
 ```text
 birchat.ai_threads  — AI-диалог пользователя внутри компании
 birchat.ai_messages — сообщения USER и ASSISTANT внутри AI-диалога
 ```
 
-Важно: текст ответа пока mock. Но структура API уже близка к будущей OpenAI-интеграции.
+Важно: AI уже отвечает реальной моделью, но пока не получает контекст сообщений общего чата, файлов и памяти компании. Это будет добавлено отдельным этапом.
 
 ## 8.1. Задать вопрос AI
 
@@ -1467,7 +1544,7 @@ POST /api/companies/{companyId}/ai/ask?userId={userId}
 
 ```json
 {
-  "question": "Что сегодня было в компании?"
+  "question": "Что ты умеешь делать в BirChat?"
 }
 ```
 
@@ -1477,14 +1554,22 @@ POST /api/companies/{companyId}/ai/ask?userId={userId}
 {
   "threadId": "thread-uuid",
   "messageId": "assistant-message-uuid",
-  "answer": "AI mock: я пока работаю в тестовом режиме.
-Позже здесь будет ответ на основе сообщений, файлов и памяти компании.
-
-Ваш вопрос: Что сегодня было в компании?
-",
-  "model": "mock",
-  "createdAt": "2026-09-15T15:45:00Z"
+  "answer": "Я AI Assistant в BirChat, умею отвечать на вопросы, помогать с информацией и общаться на русском языке.",
+  "model": "glm-4.5-air",
+  "createdAt": "2026-09-16T11:35:55.892369Z"
 }
+```
+
+В mock-режиме поле `model` будет равно:
+
+```text
+mock
+```
+
+В GLM-режиме поле `model` будет равно модели, настроенной на backend, например:
+
+```text
+glm-4.5-air
 ```
 
 ### Поля ответа
@@ -1494,7 +1579,7 @@ POST /api/companies/{companyId}/ai/ask?userId={userId}
 | threadId | UUID | ID default AI-thread пользователя внутри компании |
 | messageId | UUID | ID сохранённого сообщения AI с role = `ASSISTANT` |
 | answer | string | Ответ AI для отображения пользователю |
-| model | string | На текущем этапе всегда `mock` |
+| model | string | Фактическая модель ответа: `mock`, `glm-4.5-air` или другая модель, настроенная на backend |
 | createdAt | datetime | Дата создания ответа в UTC с `Z` |
 
 ### Логика
@@ -1504,9 +1589,10 @@ POST /api/companies/{companyId}/ai/ask?userId={userId}
 2. Находит default AI-thread для companyId + userId.
 3. Если thread ещё нет — создаёт его.
 4. Сохраняет вопрос пользователя в ai_messages с role = USER.
-5. Генерирует mock-ответ.
-6. Сохраняет mock-ответ в ai_messages с role = ASSISTANT и model = mock.
-7. Возвращает threadId, messageId, answer, model, createdAt.
+5. Выбирает AI provider по настройке AI_PROVIDER.
+6. Получает ответ от mock provider или GLM provider.
+7. Сохраняет ответ в ai_messages с role = ASSISTANT и фактическим model.
+8. Возвращает threadId, messageId, answer, model, createdAt.
 ```
 
 ### Ограничения
@@ -1515,6 +1601,7 @@ POST /api/companies/{companyId}/ai/ask?userId={userId}
 question обязателен
 question не должен превышать 5000 символов
 пользователь должен быть active-участником компании
+AI пока не получает контекст сообщений, файлов и памяти компании
 ```
 
 ### Ошибки
@@ -1522,6 +1609,7 @@ question не должен превышать 5000 символов
 ```text
 400 VALIDATION — question пустой или превышает 5000 символов
 403 NOT_A_MEMBER — пользователь не состоит в компании
+500 INTERNAL_ERROR — внешний AI provider недоступен, не настроен, нет баланса или вернул ошибку
 ```
 
 ### Использование во Flutter
@@ -1529,6 +1617,8 @@ question не должен превышать 5000 символов
 Используется на экране AI Director, когда пользователь отправляет вопрос. Ответ можно показать как новое сообщение AI.
 
 После успешного ответа Flutter может либо сразу добавить `answer` в локальный список сообщений, либо заново запросить историю через `GET /ai/history`.
+
+Важно: Flutter должен ориентироваться на структуру полей, а не на конкретный текст `answer`, потому что ответ генерируется моделью и может отличаться при каждом вызове.
 
 ---
 
@@ -1562,9 +1652,9 @@ GET /api/companies/5479c4a8-f805-4d0d-bbc8-87a45af85b93/ai/director/summary/toda
     "Сообщения общего чата будут анализироваться позже",
     "Файлы компании будут учитываться позже",
     "Память компании будет добавлена отдельным этапом",
-    "Интеграция с OpenAI будет подключена после mock-этапа"
+    "Интеграция с реальным AI provider для /ai/ask уже подключена"
   ],
-  "createdAt": "2026-09-15T15:45:00Z"
+  "createdAt": "2026-09-16T11:35:55.892369Z"
 }
 ```
 
@@ -1587,7 +1677,7 @@ GET /api/companies/5479c4a8-f805-4d0d-bbc8-87a45af85b93/ai/director/summary/toda
 
 Используется для первого экрана AI Director или блока “Сводка за сегодня”.
 
-Важно: текущий endpoint возвращает mock-данные. Не нужно строить бизнес-логику на конкретном тексте `summary` и `items`, потому что после подключения OpenAI содержимое ответа изменится.
+Важно: текущий endpoint сводки пока возвращает mock-данные. Не нужно строить бизнес-логику на конкретном тексте `summary` и `items`.
 
 ---
 
@@ -1621,16 +1711,16 @@ GET /api/companies/5479c4a8-f805-4d0d-bbc8-87a45af85b93/ai/history?userId=598586
     {
       "id": "user-message-uuid",
       "role": "USER",
-      "content": "Что сегодня было в компании?",
+      "content": "Что ты умеешь делать в BirChat?",
       "model": null,
-      "createdAt": "2026-09-15T15:44:59Z"
+      "createdAt": "2026-09-16T11:35:51.691535Z"
     },
     {
       "id": "assistant-message-uuid",
       "role": "ASSISTANT",
-      "content": "AI mock: я пока работаю в тестовом режиме...",
-      "model": "mock",
-      "createdAt": "2026-09-15T15:45:00Z"
+      "content": "Я AI Assistant в BirChat, умею отвечать на вопросы, помогать с информацией и общаться на русском языке.",
+      "model": "glm-4.5-air",
+      "createdAt": "2026-09-16T11:35:55.892369Z"
     }
   ]
 }
@@ -1654,7 +1744,7 @@ GET /api/companies/5479c4a8-f805-4d0d-bbc8-87a45af85b93/ai/history?userId=598586
 | messages[].id | UUID | ID AI-сообщения |
 | messages[].role | string | `USER` или `ASSISTANT` |
 | messages[].content | string | Текст вопроса или ответа |
-| messages[].model | string/null | Для `ASSISTANT` сейчас `mock`, для `USER` — `null` |
+| messages[].model | string/null | Для `USER` — `null`; для `ASSISTANT` — фактическая модель ответа: `mock`, `glm-4.5-air` или другая настроенная модель |
 | messages[].createdAt | datetime | Дата создания сообщения в UTC с `Z` |
 
 ### Логика
@@ -1689,7 +1779,6 @@ GET /api/companies/5479c4a8-f805-4d0d-bbc8-87a45af85b93/ai/history?userId=598586
 ```
 
 ---
-
 # 9. Сотрудники компании
 
 ## 9.1. Получить список сотрудников
@@ -2038,14 +2127,20 @@ POST /api/companies/{companyId}/employees?actorUserId={actorUserId}
 
 # 15. Что будет добавлено позже
 
-Следующие API будут добавляться по мере разработки:
+Следующие API и улучшения будут добавляться по мере разработки:
 
 ```text
-Настоящая OpenAI-интеграция:
-POST /api/companies/{companyId}/ai/ask будет возвращать реальный AI-ответ вместо mock
-
 AI context / company memory:
-поиск релевантных сообщений и файлов для ответа AI
+поиск и передача релевантных сообщений общего чата для ответа AI
+
+AI file context:
+использование metadata и содержимого документов для ответа AI
+
+AI Director real summary:
+GET /api/companies/{companyId}/ai/director/summary/today будет строить реальную сводку по данным компании
+
+AI usage analytics:
+хранение inputTokens, outputTokens, totalTokens, provider, model и примерной стоимости
 
 История отправок:
 GET  /api/companies/{companyId}/share-history
@@ -2068,7 +2163,7 @@ PUT /api/companies/{companyId}/settings
 * временно используется `userId` в query-параметрах;
 * для добавления сотрудника временно используется `actorUserId`;
 * нет WebSocket;
-* нет настоящей OpenAI-интеграции; AI работает в mock-режиме, но история AI уже сохраняется;
+* AI пока не получает контекст сообщений, файлов и памяти компании; endpoint сводки `/ai/director/summary/today` пока остаётся mock;
 * нет истории отправок;
 * нет настроек компании;
 * нет ролей на уровне permissions;
@@ -2082,7 +2177,8 @@ PUT /api/companies/{companyId}/settings
 * файлы загружаются через backend в Supabase Storage;
 * для открытия private-файла используется `/download-url`;
 * поиск по сообщениям общего чата и именам файлов компании;
-* AI mock endpoints для экрана AI Director;
+* real AI provider для `POST /ai/ask` через GLM;
+* universal AI provider с режимами `mock` и `glm`;
 * хранение истории AI-диалога в PostgreSQL/Neon.
 
 ---
@@ -2151,7 +2247,7 @@ AiDirectorScreen
     ↓ GET /api/companies/{companyId}/ai/history?userId=...&limit=50
     ↓ GET /api/companies/{companyId}/ai/director/summary/today?userId=...
     ↓ POST /api/companies/{companyId}/ai/ask?userId=...
-    ↓ response contains threadId and messageId
+    ↓ response contains threadId, messageId, answer, model and createdAt
 
 ChatScreen
     ↓ GET /api/companies/{companyId}/chats/general/messages?userId=...&limit=50

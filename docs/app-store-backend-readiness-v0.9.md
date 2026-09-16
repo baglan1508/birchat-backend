@@ -1,6 +1,6 @@
 # BirChat Backend · App Store Readiness
 
-Дата обновления: `2026-09-15`
+Дата обновления: `2026-09-16`
 Backend prod: `https://birchat-backend.onrender.com`
 Swagger prod: `https://birchat-backend.onrender.com/swagger-ui.html`
 
@@ -26,7 +26,7 @@ Swagger prod: `https://birchat-backend.onrender.com/swagger-ui.html`
 
 Search API используется для поиска по сообщениям общего чата и именам файлов компании.
 
-AI endpoints пока работают в mock-режиме и нужны для подключения экрана AI Director во Flutter. С версии v0.8 история AI-диалога сохраняется в PostgreSQL/Neon. Настоящая OpenAI-интеграция будет отдельным этапом.
+AI endpoints уже доступны на prod. С версии v0.9 `POST /ai/ask` может возвращать реальный ответ через GLM (`model = glm-4.5-air`), а история AI-диалога сохраняется в PostgreSQL/Neon. Endpoint `GET /ai/director/summary/today` пока остаётся mock-сводкой.
 
 ---
 
@@ -270,11 +270,11 @@ FILE    — найден файл компании по originalFileName
 
 ---
 
-# 8. Дополнительная проверка AI mock + history API
+# 8. Дополнительная проверка AI GLM + history API
 
-AI mock API не является App Store blocker, но уже доступен на prod и может быть подключён клиентом для экрана AI Director.
+AI API не является App Store blocker, но уже доступен на prod и может быть подключён клиентом для экрана AI Director.
 
-С версии `v0.8` backend сохраняет историю AI-диалога в PostgreSQL/Neon.
+С версии `v0.8` backend сохраняет историю AI-диалога в PostgreSQL/Neon. С версии `v0.9` `POST /ai/ask` может использовать реальный GLM provider.
 
 ## 8.1. Проверка AI summary
 
@@ -321,7 +321,7 @@ curl -X POST   "https://birchat-backend.onrender.com/api/companies/{companyId}/a
 threadId
 messageId
 answer
-model = mock
+model = glm-4.5-air или другая модель, настроенная на backend
 createdAt
 ```
 
@@ -329,7 +329,7 @@ createdAt
 
 ```text
 role = USER       — вопрос пользователя
-role = ASSISTANT  — mock-ответ AI
+role = ASSISTANT  — ответ AI с model = glm-4.5-air или другой настроенной моделью
 ```
 
 ## 8.3. Проверка AI history
@@ -379,7 +379,7 @@ createdAt
 403 NOT_A_MEMBER — пользователь не состоит в компании
 ```
 
-Важно: это mock endpoint. Текст ответа не является бизнес-контрактом. Flutter должен ориентироваться на структуру полей, а не на конкретный текст `answer`, `summary` или `items`.
+Важно: `POST /ai/ask` может возвращать реальный AI-ответ, поэтому Flutter должен ориентироваться на структуру полей, а не на конкретный текст `answer`. Endpoint `GET /ai/director/summary/today` пока возвращает mock-данные, поэтому для него также не нужно строить бизнес-логику на конкретном тексте `summary` и `items`.
 
 ---
 
@@ -408,6 +408,13 @@ AUTH_SMS_MAX_ATTEMPTS=5
 AUTH_SMS_DEMO_PHONE=...
 AUTH_SMS_DEMO_CODE=...
 AUTH_SMS_OTP_SECRET=...
+
+AI_PROVIDER=glm
+AI_GLM_API_KEY=...
+AI_GLM_MODEL=glm-4.5-air
+AI_GLM_BASE_URL=https://api.z.ai/api/paas/v4
+AI_GLM_MAX_TOKENS=700
+AI_GLM_TEMPERATURE=0.4
 ```
 
-Секреты не хранить в Git.
+Секреты не хранить в Git. `AI_GLM_API_KEY` должен храниться только в env backend/Render и не должен попадать во Flutter.
