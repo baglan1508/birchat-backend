@@ -2,6 +2,7 @@ package kz.birchat.api.service;
 
 import jakarta.persistence.EntityManager;
 import kz.birchat.api.ai.AiProvider;
+import kz.birchat.api.ai.AiProviderMessage;
 import kz.birchat.api.ai.AiProviderRequest;
 import kz.birchat.api.ai.AiProviderResolver;
 import kz.birchat.api.ai.AiProviderResponse;
@@ -12,6 +13,7 @@ import kz.birchat.api.dto.AiHistoryMessageResponse;
 import kz.birchat.api.dto.AiHistoryResponse;
 import kz.birchat.api.entity.AiMessageEntity;
 import kz.birchat.api.entity.AiThreadEntity;
+import kz.birchat.api.entity.ChatMessageEntity;
 import kz.birchat.api.entity.CompanyEntity;
 import kz.birchat.api.entity.UserEntity;
 import kz.birchat.api.enums.AiMessageRole;
@@ -19,6 +21,7 @@ import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
 import kz.birchat.api.repository.AiMessageRepository;
 import kz.birchat.api.repository.AiThreadRepository;
+import kz.birchat.api.repository.ChatMessageRepository;
 import kz.birchat.api.repository.CompanyMemberRepository;
 import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
@@ -39,9 +42,13 @@ public class AiService {
     private static final int DEFAULT_HISTORY_LIMIT = 50;
     private static final int MAX_HISTORY_LIMIT = 100;
 
+    private static final int AI_CHAT_CONTEXT_LIMIT = 30;
+    private static final int AI_CONTEXT_MESSAGE_MAX_LENGTH = 500;
+
     private final CompanyMemberRepository companyMemberRepository;
     private final AiThreadRepository aiThreadRepository;
     private final AiMessageRepository aiMessageRepository;
+    private final ChatMessageRepository chatMessageRepository;
     private final AiProviderResolver aiProviderResolver;
     private final EntityManager entityManager;
 
@@ -71,13 +78,16 @@ public class AiService {
                 now
         );
 
+        List<AiProviderMessage> contextMessages = loadRecentGeneralChatContext(companyId);
+
         AiProvider provider = aiProviderResolver.resolve();
 
         AiProviderResponse providerResponse = provider.ask(
                 new AiProviderRequest(
                         companyId,
                         userId,
-                        question
+                        question,
+                        contextMessages
                 )
         );
 
@@ -117,10 +127,10 @@ public class AiService {
                 "Сводка за сегодня",
                 "AI mock: позже здесь будет краткая сводка по сообщениям, файлам и активности компании за сегодня.",
                 List.of(
-                        "Сообщения общего чата будут анализироваться позже",
+                        "Сообщения общего чата будут анализироваться позже отдельным endpoint-ом summary",
                         "Файлы компании будут учитываться позже",
                         "Память компании будет добавлена отдельным этапом",
-                        "Интеграция с реальным AI provider будет подключена постепенно"
+                        "POST /ai/ask уже может использовать контекст последних сообщений общего чата"
                 ),
                 TimeUtils.utcOffsetNow()
         );
@@ -158,6 +168,49 @@ public class AiService {
                         null,
                         List.of()
                 ));
+    }
+
+    private List<AiProviderMessage> loadRecentGeneralChatContext(UUID companyId) {
+        return chatMessageRepository
+                .findLatestGeneralChatMessagesForAiContext(
+                        companyId,
+                        PageRequest.of(0, AI_CHAT_CONTEXT_LIMIT)
+                )
+                .stream()
+                .filter(message -> message.getContent() != null && !message.getContent().isBlank())
+                .sorted(Comparator.comparing(ChatMessageEntity::getCreatedAt)
+                        .thenComparing(ChatMessageEntity::getId))
+                .map(this::toProviderMessage)
+                .toList();
+    }
+
+    private AiProviderMessage toProviderMessage(ChatMessageEntity message) {
+        return new AiProviderMessage(
+                "GENERAL_CHAT",
+                buildAuthor(message),
+                truncateForAiContext(message.getContent()),
+                message.getCreatedAt() == null
+                        ? null
+                        : TimeUtils.toUtcOffset(message.getCreatedAt()).toString()
+        );
+    }
+
+    private String buildAuthor(ChatMessageEntity message) {
+        if (message.getUser() == null || message.getUser().getId() == null) {
+            return "Пользователь";
+        }
+
+        return "userId=" + message.getUser().getId();
+    }
+
+    private String truncateForAiContext(String value) {
+        String normalized = value.trim();
+
+        if (normalized.length() <= AI_CONTEXT_MESSAGE_MAX_LENGTH) {
+            return normalized;
+        }
+
+        return normalized.substring(0, AI_CONTEXT_MESSAGE_MAX_LENGTH) + "...";
     }
 
     private AiThreadEntity getOrCreateDefaultThread(

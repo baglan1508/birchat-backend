@@ -15,12 +15,21 @@ public class MockAiProvider implements AiProvider {
 
     @Override
     public AiProviderResponse ask(AiProviderRequest request) {
+        int contextMessagesCount = request.contextMessages() == null
+                ? 0
+                : request.contextMessages().size();
+
         String answer = """
                 AI mock: я пока работаю в тестовом режиме.
-                Позже здесь будет ответ на основе сообщений, файлов и памяти компании.
+                Контекст последних сообщений общего чата получен.
+
+                Количество сообщений в контексте: %s
 
                 Ваш вопрос: %s
-                """.formatted(request.question());
+                """.formatted(
+                contextMessagesCount,
+                request.question()
+        );
 
         return new AiProviderResponse(
                 answer,
