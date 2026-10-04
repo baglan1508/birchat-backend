@@ -222,6 +222,7 @@ public class AiService {
                         companyId,
                         freshAfter
                 )
+                .filter(summary -> !hasNewMessagesAfterSummary(companyId, summary))
                 .orElseGet(() -> {
                     try {
                         return generateAndSaveCompanySummary(companyId, now);
@@ -241,6 +242,22 @@ public class AiService {
                                 ));
                     }
                 });
+    }
+
+    private boolean hasNewMessagesAfterSummary(
+            UUID companyId,
+            AiCompanySummaryEntity summary
+    ) {
+        if (summary == null || summary.getPeriodEnd() == null) {
+            return true;
+        }
+
+        Long count = chatMessageRepository.countGeneralChatMessagesAfterForAiSummary(
+                companyId,
+                summary.getPeriodEnd()
+        );
+
+        return count != null && count > 0;
     }
 
     private AiCompanySummaryEntity generateAndSaveCompanySummary(

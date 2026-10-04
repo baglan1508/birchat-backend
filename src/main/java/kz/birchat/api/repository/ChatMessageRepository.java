@@ -180,4 +180,17 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
             @Param("periodEnd") LocalDateTime periodEnd,
             Pageable pageable
     );
+    @Query("""
+    SELECT COUNT(m) FROM ChatMessageEntity m
+    JOIN m.chat ch
+    WHERE m.company.id = :companyId
+      AND ch.type = 'GENERAL'
+      AND m.isDeleted = false
+      AND m.content IS NOT NULL
+      AND m.createdAt > :after
+""")
+    Long countGeneralChatMessagesAfterForAiSummary(
+            @Param("companyId") UUID companyId,
+            @Param("after") LocalDateTime after
+    );
 }
