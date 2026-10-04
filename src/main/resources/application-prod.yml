@@ -53,3 +53,9 @@ ai:
     base-url: ${AI_GLM_BASE_URL:https://api.z.ai/api/paas/v4}
     max-tokens: ${AI_GLM_MAX_TOKENS:1024}
     temperature: ${AI_GLM_TEMPERATURE:0.6}
+  summary:
+    interval-hours: ${AI_SUMMARY_INTERVAL_HOURS:3}
+    max-messages: ${AI_SUMMARY_MAX_MESSAGES:100}
+    max-message-length: ${AI_SUMMARY_MAX_MESSAGE_LENGTH:500}
+    cron: ${AI_SUMMARY_CRON:0 0 */3 * * *}
+    zone: ${AI_SUMMARY_ZONE:Asia/Almaty}

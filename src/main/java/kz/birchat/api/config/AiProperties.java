@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 public class AiProperties {
 
     private String provider = "mock";
-
+    private Summary summary = new Summary();
     private Glm glm = new Glm();
 
     @Getter
@@ -23,5 +23,14 @@ public class AiProperties {
         private String baseUrl = "https://api.z.ai/api/paas/v4";
         private Integer maxTokens = 1024;
         private Double temperature = 0.6;
+    }
+    @Getter
+    @Setter
+    public static class Summary {
+        private Integer intervalHours = 3;
+        private Integer maxMessages = 100;
+        private Integer maxMessageLength = 500;
+        private String cron = "0 0 */3 * * *";
+        private String zone = "Asia/Almaty";
     }
 }

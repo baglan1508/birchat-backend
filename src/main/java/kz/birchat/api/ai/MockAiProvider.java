@@ -2,6 +2,8 @@ package kz.birchat.api.ai;
 
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+
 @Component
 public class MockAiProvider implements AiProvider {
 
@@ -33,6 +35,24 @@ public class MockAiProvider implements AiProvider {
 
         return new AiProviderResponse(
                 answer,
+                MODEL
+        );
+    }
+
+    @Override
+    public AiSummaryProviderResponse summarize(AiSummaryProviderRequest request) {
+        int contextMessagesCount = request.contextMessages() == null
+                ? 0
+                : request.contextMessages().size();
+
+        return new AiSummaryProviderResponse(
+                "Сводка за сегодня",
+                "AI mock: тестовая сводка по сообщениям общего чата.",
+                List.of(
+                        "Количество сообщений в контексте: " + contextMessagesCount,
+                        "Период: " + request.periodStart() + " — " + request.periodEnd(),
+                        "Реальная сводка будет сформирована при AI_PROVIDER=glm"
+                ),
                 MODEL
         );
     }

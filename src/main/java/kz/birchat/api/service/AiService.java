@@ -6,11 +6,15 @@ import kz.birchat.api.ai.AiProviderMessage;
 import kz.birchat.api.ai.AiProviderRequest;
 import kz.birchat.api.ai.AiProviderResolver;
 import kz.birchat.api.ai.AiProviderResponse;
+import kz.birchat.api.ai.AiSummaryProviderRequest;
+import kz.birchat.api.ai.AiSummaryProviderResponse;
+import kz.birchat.api.config.AiProperties;
 import kz.birchat.api.dto.AiAskRequest;
 import kz.birchat.api.dto.AiAskResponse;
 import kz.birchat.api.dto.AiDirectorSummaryResponse;
 import kz.birchat.api.dto.AiHistoryMessageResponse;
 import kz.birchat.api.dto.AiHistoryResponse;
+import kz.birchat.api.entity.AiCompanySummaryEntity;
 import kz.birchat.api.entity.AiMessageEntity;
 import kz.birchat.api.entity.AiThreadEntity;
 import kz.birchat.api.entity.ChatMessageEntity;
@@ -19,37 +23,56 @@ import kz.birchat.api.entity.UserEntity;
 import kz.birchat.api.enums.AiMessageRole;
 import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
+import kz.birchat.api.repository.AiCompanySummaryRepository;
 import kz.birchat.api.repository.AiMessageRepository;
 import kz.birchat.api.repository.AiThreadRepository;
 import kz.birchat.api.repository.ChatMessageRepository;
 import kz.birchat.api.repository.CompanyMemberRepository;
+import kz.birchat.api.repository.CompanyRepository;
 import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AiService {
 
     private static final String STATUS_ACTIVE = "ACTIVE";
+
     private static final int DEFAULT_HISTORY_LIMIT = 50;
     private static final int MAX_HISTORY_LIMIT = 100;
 
     private static final int AI_CHAT_CONTEXT_LIMIT = 30;
     private static final int AI_CONTEXT_MESSAGE_MAX_LENGTH = 500;
 
+    private static final int DEFAULT_SUMMARY_INTERVAL_HOURS = 3;
+    private static final int DEFAULT_SUMMARY_MAX_MESSAGES = 100;
+    private static final int DEFAULT_SUMMARY_MAX_MESSAGE_LENGTH = 500;
+    private static final String DEFAULT_SUMMARY_ZONE = "Asia/Almaty";
+
     private final CompanyMemberRepository companyMemberRepository;
+    private final CompanyRepository companyRepository;
     private final AiThreadRepository aiThreadRepository;
     private final AiMessageRepository aiMessageRepository;
+    private final AiCompanySummaryRepository aiCompanySummaryRepository;
     private final ChatMessageRepository chatMessageRepository;
     private final AiProviderResolver aiProviderResolver;
+    private final AiProperties aiProperties;
     private final EntityManager entityManager;
 
     @Transactional
@@ -116,24 +139,44 @@ public class AiService {
         );
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public AiDirectorSummaryResponse getTodayDirectorSummary(
             UUID companyId,
             UUID userId
     ) {
         checkActiveMember(companyId, userId);
 
-        return new AiDirectorSummaryResponse(
-                "Сводка за сегодня",
-                "AI mock: позже здесь будет краткая сводка по сообщениям, файлам и активности компании за сегодня.",
-                List.of(
-                        "Сообщения общего чата будут анализироваться позже отдельным endpoint-ом summary",
-                        "Файлы компании будут учитываться позже",
-                        "Память компании будет добавлена отдельным этапом",
-                        "POST /ai/ask уже может использовать контекст последних сообщений общего чата"
-                ),
-                TimeUtils.utcOffsetNow()
-        );
+        AiCompanySummaryEntity summary = getFreshOrGenerateCompanySummary(companyId);
+
+        return toDirectorSummaryResponse(summary);
+    }
+
+    @Transactional
+    public void refreshCompanySummaries() {
+        List<CompanyEntity> companies = companyRepository.findByStatus(STATUS_ACTIVE);
+
+        log.info("AI company summary refresh started. companiesCount={}", companies.size());
+
+        for (CompanyEntity company : companies) {
+            if (company == null || company.getId() == null) {
+                continue;
+            }
+
+            try {
+                generateAndSaveCompanySummary(
+                        company.getId(),
+                        TimeUtils.utcNow()
+                );
+            } catch (Exception ex) {
+                log.error(
+                        "Failed to refresh AI company summary. companyId={}",
+                        company.getId(),
+                        ex
+                );
+            }
+        }
+
+        log.info("AI company summary refresh finished");
     }
 
     @Transactional(readOnly = true)
@@ -170,6 +213,104 @@ public class AiService {
                 ));
     }
 
+    private AiCompanySummaryEntity getFreshOrGenerateCompanySummary(UUID companyId) {
+        LocalDateTime now = TimeUtils.utcNow();
+        LocalDateTime freshAfter = now.minusHours(summaryIntervalHours());
+
+        return aiCompanySummaryRepository
+                .findFirstByCompanyIdAndGeneratedAtAfterOrderByGeneratedAtDesc(
+                        companyId,
+                        freshAfter
+                )
+                .orElseGet(() -> {
+                    try {
+                        return generateAndSaveCompanySummary(companyId, now);
+                    } catch (Exception ex) {
+                        log.error(
+                                "Failed to generate fresh AI summary. Trying to return latest existing summary. companyId={}",
+                                companyId,
+                                ex
+                        );
+
+                        return aiCompanySummaryRepository
+                                .findFirstByCompanyIdOrderByGeneratedAtDesc(companyId)
+                                .orElseThrow(() -> new ApiException(
+                                        HttpStatus.INTERNAL_SERVER_ERROR,
+                                        ApiErrorCode.INTERNAL_ERROR,
+                                        "Не удалось сформировать AI-сводку"
+                                ));
+                    }
+                });
+    }
+
+    private AiCompanySummaryEntity generateAndSaveCompanySummary(
+            UUID companyId,
+            LocalDateTime now
+    ) {
+        LocalDateTime periodStart = buildTodayPeriodStartUtc(now);
+        LocalDateTime periodEnd = now;
+
+        List<AiProviderMessage> contextMessages = loadSummaryChatContext(
+                companyId,
+                periodStart,
+                periodEnd
+        );
+
+        AiProvider provider = aiProviderResolver.resolve();
+
+        AiSummaryProviderResponse providerResponse = provider.summarize(
+                new AiSummaryProviderRequest(
+                        companyId,
+                        periodStart,
+                        periodEnd,
+                        contextMessages
+                )
+        );
+
+        CompanyEntity companyRef = entityManager.getReference(
+                CompanyEntity.class,
+                companyId
+        );
+
+        AiCompanySummaryEntity entity = new AiCompanySummaryEntity();
+        entity.setId(UUID.randomUUID());
+        entity.setCompany(companyRef);
+        entity.setTitle(normalizeSummaryTitle(providerResponse.title()));
+        entity.setSummary(normalizeSummaryText(providerResponse.summary()));
+        entity.setItemsText(joinSummaryItems(providerResponse.items()));
+        entity.setModel(providerResponse.model());
+        entity.setPeriodStart(periodStart);
+        entity.setPeriodEnd(periodEnd);
+        entity.setGeneratedAt(now);
+        entity.setCreatedAt(now);
+        entity.setUpdatedAt(now);
+
+        return aiCompanySummaryRepository.save(entity);
+    }
+
+    private List<AiProviderMessage> loadSummaryChatContext(
+            UUID companyId,
+            LocalDateTime periodStart,
+            LocalDateTime periodEnd
+    ) {
+        return chatMessageRepository
+                .findGeneralChatMessagesForAiSummary(
+                        companyId,
+                        periodStart,
+                        periodEnd,
+                        PageRequest.of(0, summaryMaxMessages())
+                )
+                .stream()
+                .filter(message -> message.getContent() != null && !message.getContent().isBlank())
+                .sorted(Comparator.comparing(ChatMessageEntity::getCreatedAt)
+                        .thenComparing(ChatMessageEntity::getId))
+                .map(message -> toProviderMessage(
+                        message,
+                        summaryMaxMessageLength()
+                ))
+                .toList();
+    }
+
     private List<AiProviderMessage> loadRecentGeneralChatContext(UUID companyId) {
         return chatMessageRepository
                 .findLatestGeneralChatMessagesForAiContext(
@@ -180,15 +321,21 @@ public class AiService {
                 .filter(message -> message.getContent() != null && !message.getContent().isBlank())
                 .sorted(Comparator.comparing(ChatMessageEntity::getCreatedAt)
                         .thenComparing(ChatMessageEntity::getId))
-                .map(this::toProviderMessage)
+                .map(message -> toProviderMessage(
+                        message,
+                        AI_CONTEXT_MESSAGE_MAX_LENGTH
+                ))
                 .toList();
     }
 
-    private AiProviderMessage toProviderMessage(ChatMessageEntity message) {
+    private AiProviderMessage toProviderMessage(
+            ChatMessageEntity message,
+            int maxLength
+    ) {
         return new AiProviderMessage(
                 "GENERAL_CHAT",
                 buildAuthor(message),
-                truncateForAiContext(message.getContent()),
+                truncateForAiContext(message.getContent(), maxLength),
                 message.getCreatedAt() == null
                         ? null
                         : TimeUtils.toUtcOffset(message.getCreatedAt()).toString()
@@ -196,21 +343,153 @@ public class AiService {
     }
 
     private String buildAuthor(ChatMessageEntity message) {
-        if (message.getUser() == null || message.getUser().getId() == null) {
+        if (message.getUser() == null) {
             return "Пользователь";
         }
 
-        return "userId=" + message.getUser().getId();
+        UserEntity user = message.getUser();
+
+        if (user.getDisplayName() != null && !user.getDisplayName().isBlank()) {
+            return user.getDisplayName().trim();
+        }
+
+        if (user.getFullName() != null && !user.getFullName().isBlank()) {
+            return user.getFullName().trim();
+        }
+
+        if (user.getInitials() != null && !user.getInitials().isBlank()) {
+            return user.getInitials().trim();
+        }
+
+        if (user.getId() != null) {
+            return "userId=" + user.getId();
+        }
+
+        return "Пользователь";
     }
 
-    private String truncateForAiContext(String value) {
+    private String truncateForAiContext(
+            String value,
+            int maxLength
+    ) {
         String normalized = value.trim();
 
-        if (normalized.length() <= AI_CONTEXT_MESSAGE_MAX_LENGTH) {
+        if (normalized.length() <= maxLength) {
             return normalized;
         }
 
-        return normalized.substring(0, AI_CONTEXT_MESSAGE_MAX_LENGTH) + "...";
+        return normalized.substring(0, maxLength) + "...";
+    }
+
+    private AiDirectorSummaryResponse toDirectorSummaryResponse(AiCompanySummaryEntity summary) {
+        return new AiDirectorSummaryResponse(
+                summary.getTitle(),
+                summary.getSummary(),
+                splitSummaryItems(summary.getItemsText()),
+                TimeUtils.toUtcOffset(summary.getGeneratedAt())
+        );
+    }
+
+    private String normalizeSummaryTitle(String title) {
+        if (title == null || title.isBlank()) {
+            return "Сводка за сегодня";
+        }
+
+        return title.trim();
+    }
+
+    private String normalizeSummaryText(String summary) {
+        if (summary == null || summary.isBlank()) {
+            return "За выбранный период недостаточно данных для сводки.";
+        }
+
+        return summary.trim();
+    }
+
+    private String joinSummaryItems(List<String> items) {
+        if (items == null || items.isEmpty()) {
+            return "";
+        }
+
+        return items
+                .stream()
+                .filter(item -> item != null && !item.isBlank())
+                .map(String::trim)
+                .collect(Collectors.joining("\n"));
+    }
+
+    private List<String> splitSummaryItems(String itemsText) {
+        if (itemsText == null || itemsText.isBlank()) {
+            return List.of();
+        }
+
+        return Arrays.stream(itemsText.split("\\R"))
+                .map(String::trim)
+                .filter(line -> !line.isBlank())
+                .toList();
+    }
+
+    private LocalDateTime buildTodayPeriodStartUtc(LocalDateTime nowUtc) {
+        ZoneId zone = resolveSummaryZone();
+
+        ZonedDateTime nowInSummaryZone = nowUtc
+                .atOffset(ZoneOffset.UTC)
+                .atZoneSameInstant(zone);
+
+        ZonedDateTime startOfDayInSummaryZone = nowInSummaryZone
+                .toLocalDate()
+                .atStartOfDay(zone);
+
+        return startOfDayInSummaryZone
+                .withZoneSameInstant(ZoneOffset.UTC)
+                .toLocalDateTime();
+    }
+
+    private ZoneId resolveSummaryZone() {
+        String zone = aiProperties.getSummary() == null
+                ? DEFAULT_SUMMARY_ZONE
+                : aiProperties.getSummary().getZone();
+
+        if (zone == null || zone.isBlank()) {
+            return ZoneId.of(DEFAULT_SUMMARY_ZONE);
+        }
+
+        try {
+            return ZoneId.of(zone.trim());
+        } catch (Exception ex) {
+            log.warn("Invalid ai.summary.zone={}, fallback={}", zone, DEFAULT_SUMMARY_ZONE);
+            return ZoneId.of(DEFAULT_SUMMARY_ZONE);
+        }
+    }
+
+    private int summaryIntervalHours() {
+        if (aiProperties.getSummary() == null
+                || aiProperties.getSummary().getIntervalHours() == null
+                || aiProperties.getSummary().getIntervalHours() < 1) {
+            return DEFAULT_SUMMARY_INTERVAL_HOURS;
+        }
+
+        return aiProperties.getSummary().getIntervalHours();
+    }
+
+    private int summaryMaxMessages() {
+        if (aiProperties.getSummary() == null
+                || aiProperties.getSummary().getMaxMessages() == null
+                || aiProperties.getSummary().getMaxMessages() < 1) {
+            return DEFAULT_SUMMARY_MAX_MESSAGES;
+        }
+
+        return aiProperties.getSummary().getMaxMessages();
+    }
+
+    private int summaryMaxMessageLength() {
+        if (aiProperties.getSummary() == null
+                || aiProperties.getSummary().getMaxMessageLength() == null
+                || aiProperties.getSummary().getMaxMessageLength() < 1) {
+            return DEFAULT_SUMMARY_MAX_MESSAGE_LENGTH;
+        }
+
+        return aiProperties.getSummary().getMaxMessageLength();
     }
 
     private AiThreadEntity getOrCreateDefaultThread(
