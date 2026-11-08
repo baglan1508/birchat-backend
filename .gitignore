@@ -54,3 +54,6 @@ Thumbs.db
 ### Local config ###
 src/main/resources/application-local.yml
 .env
+
+/http/http-client.private.env.json
+.idea/httpRequests/

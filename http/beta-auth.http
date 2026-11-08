@@ -1,0 +1,56 @@
+
+### 1. Отправляем OTP
+POST {{baseUrl}}/api/auth/send-code
+Content-Type: application/json
+
+{
+  "phone": "{{phone}}"
+}
+
+> {%
+    client.test("OTP request: 200", function() {
+        client.assert(response.status === 200);
+    });
+%}
+
+### 2. Входим и сохраняем JWT
+POST {{baseUrl}}/api/auth/verify-code
+Content-Type: application/json
+
+{
+  "phone": "{{phone}}",
+  "code": "{{code}}"
+}
+
+> {%
+    client.test("Login: 200 и токены получены", function() {
+        client.assert(response.status === 200);
+        client.assert(!!response.body.accessToken);
+        client.assert(!!response.body.refreshToken);
+    });
+
+    if (response.status === 200 && response.body.accessToken) {
+        client.global.set("accessToken", response.body.accessToken);
+        client.global.set("refreshToken", response.body.refreshToken);
+    }
+%}
+
+### 3. Получаем текущего пользователя
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Authenticated: 200", function() {
+        client.assert(response.status === 200);
+        client.assert(!!response.body.userId);
+    });
+%}
+
+### 4. Проверяем отсутствие авторизации
+GET {{baseUrl}}/api/auth/me
+
+> {%
+    client.test("Without JWT: 401", function() {
+        client.assert(response.status === 401);
+    });
+%}

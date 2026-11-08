@@ -1,0 +1,44 @@
+
+### 1. Получить мои компании
+GET {{baseUrl}}/api/companies/my
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Мои компании: 200", function() {
+        client.assert(response.status === 200);
+        client.assert(Array.isArray(response.body));
+    });
+%}
+
+### 2. Попытка выдать себя за другого пользователя
+GET {{baseUrl}}/api/companies/my?userId=11111111-1111-4111-8111-111111111111
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Подмена userId запрещена: 403", function() {
+        client.assert(response.status === 403);
+    });
+%}
+
+### 3. Создать тестовую компанию
+POST {{baseUrl}}/api/companies
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "BirChat Beta Test",
+  "field": "IT",
+  "color": "#2563EB"
+}
+
+> {%
+    client.test("Компания создана: 201", function() {
+        client.assert(response.status === 201);
+        client.assert(!!response.body.id);
+        client.assert(response.body.role === "DIRECTOR");
+    });
+
+    if (response.status === 201 && response.body.id) {
+        client.global.set("companyId", response.body.id);
+    }
+%}

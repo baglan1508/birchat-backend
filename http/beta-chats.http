@@ -1,0 +1,65 @@
+
+### 1. Отправить сообщение в общий чат
+POST {{baseUrl}}/api/companies/{{companyId}}/chats/general/messages
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "text": "Первое сообщение BirChat Beta через JWT"
+}
+
+> {%
+    client.test("Сообщение отправлено", function() {
+        client.assert(response.status === 201);
+    });
+%}
+
+### 2. Получить сообщения общего чата
+GET {{baseUrl}}/api/companies/{{companyId}}/chats/general/messages
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("История чата доступна", function() {
+        client.assert(response.status === 200);
+    });
+%}
+
+### 3. Попытка чтения без JWT
+GET {{baseUrl}}/api/companies/{{companyId}}/chats/general/messages
+
+> {%
+    client.test("Без JWT доступ запрещён", function() {
+        client.assert(response.status === 401);
+    });
+%}
+
+### 4. Попытка чтения несуществующей компании
+GET {{baseUrl}}/api/companies/11111111-1111-4111-8111-111111111111/chats/general/messages
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Недоступная компания не раскрывает сообщения", function() {
+        client.assert(
+            response.status === 403 || response.status === 404,
+            "Ожидали 403 или 404, получили " + response.status
+        );
+    });
+%}
+
+### 5. Чужой пользователь не может отправить сообщение
+POST {{baseUrl}}/api/companies/{{companyId}}/chats/general/messages
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "text": "Попытка отправить сообщение в чужую компанию"
+}
+
+> {%
+    client.test("Отправка в чужую компанию запрещена", function() {
+        client.assert(
+            response.status === 403,
+            "Ожидали 403, получили " + response.status
+        );
+    });
+%}
