@@ -1,0 +1,113 @@
+
+### 1. Чужой пользователь не может получить сотрудников
+GET {{baseUrl}}/api/companies/{{companyId}}/employees
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Чужой пользователь: 403", function() {
+        client.assert(response.status === 403);
+        client.assert(response.body.code === "NOT_A_MEMBER");
+    });
+%}
+
+### 2. Чужой пользователь не может добавить сотрудника
+POST {{baseUrl}}/api/companies/{{companyId}}/employees
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "phone": "+77000000002",
+  "fullName": "Тестовый Сотрудник",
+  "roleCode": "EMPLOYEE",
+  "position": "Тестировщик"
+}
+
+> {%
+    client.test("Добавление сотрудника запрещено: 403", function() {
+        client.assert(response.status === 403);
+        client.assert(response.body.code === "NOT_A_MEMBER");
+    });
+%}
+
+### Директор добавляет ADMIN
+POST {{baseUrl}}/api/companies/{{companyId}}/employees
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "phone": "+77000000001",
+  "fullName": "Тестовый Администратор",
+  "roleCode": "ADMIN",
+  "position": "Администратор"
+}
+
+### ADMIN пытается добавить сотрудника
+POST {{baseUrl}}/api/companies/{{companyId}}/employees
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "phone": "+77000000002",
+  "fullName": "Тестовый Сотрудник",
+  "roleCode": "EMPLOYEE",
+  "position": "Тестировщик"
+}
+
+> {%
+    client.test("ADMIN не может добавлять сотрудников", function() {
+        client.assert(
+            response.status === 403,
+            "Ожидали 403, получили " + response.status
+        );
+    });
+%}
+
+### ADMIN может просматривать сотрудников своей компании
+GET {{baseUrl}}/api/companies/{{companyId}}/employees
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("ADMIN может просматривать сотрудников", function() {
+        client.assert(
+            response.status === 200,
+            "Ожидали 200, получили " + response.status
+        );
+    });
+%}
+
+### Нельзя назначить второго директора
+POST {{baseUrl}}/api/companies/{{companyId}}/employees
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "phone": "+77000000003",
+  "fullName": "Второй Директор",
+  "roleCode": "DIRECTOR",
+  "position": "Директор"
+}
+
+> {%
+    client.test("Назначение второго директора запрещено", function() {
+        client.assert(response.status === 400);
+    });
+%}
+
+### DIRECTOR не может назначить второго DIRECTOR
+POST {{baseUrl}}/api/companies/{{companyId}}/employees
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "phone": "+77000000003",
+  "fullName": "Второй Директор",
+  "roleCode": "DIRECTOR",
+  "position": "Директор"
+}
+
+> {%
+    client.test("Назначение второго директора запрещено", function() {
+        client.assert(response.status === 400);
+        client.assert(response.body.code === "VALIDATION");
+    });
+%}
