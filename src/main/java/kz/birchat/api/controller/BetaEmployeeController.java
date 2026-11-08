@@ -11,6 +11,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
+import kz.birchat.api.exception.ApiErrorCode;
+import kz.birchat.api.exception.ApiException;
 
 import java.util.List;
 import java.util.UUID;
@@ -38,6 +40,14 @@ public class BetaEmployeeController {
                                 @Valid @RequestBody CreateEmployeeRequest request) {
         UUID actor = identity.currentUserId(jwt, actorUserId);
         identity.requireDirector(companyId, actor);
+
+        if ("DIRECTOR".equalsIgnoreCase(request.roleCode().trim())) {
+            throw ApiException.badRequest(
+                    ApiErrorCode.VALIDATION,
+                    "Назначать роль DIRECTOR через добавление сотрудника запрещено"
+            );
+        }
+
         return employees.addEmployee(companyId, actor, request);
     }
 }
