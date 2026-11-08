@@ -1,5 +1,7 @@
 package kz.birchat.api.controller;
 
+import org.springframework.context.annotation.Profile;
+
 import jakarta.validation.Valid;
 import kz.birchat.api.dto.CreateEmployeeRequest;
 import kz.birchat.api.dto.EmployeeResponse;
@@ -11,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.UUID;
 
+@Profile("!beta")
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/companies/{companyId}/employees")

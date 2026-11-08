@@ -1,0 +1,77 @@
+# BirChat Beta (isolated from production).
+# Use SPRING_PROFILES_ACTIVE=beta. No credentials or direct connection strings in Git.
+spring:
+  datasource:
+    url: ${BETA_DATASOURCE_URL}
+    username: ${BETA_DATASOURCE_USERNAME}
+    password: ${BETA_DATASOURCE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        default_schema: birchat
+        format_sql: false
+
+  flyway:
+    enabled: true
+    schemas: birchat
+    default-schema: birchat
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
+
+storage:
+  supabase:
+    url: ${BETA_SUPABASE_URL:}
+    service-key: ${BETA_SUPABASE_SERVICE_KEY:}
+    bucket: ${BETA_SUPABASE_BUCKET:birchat-beta-files}
+
+auth:
+  sms:
+    code-ttl-seconds: ${BETA_AUTH_SMS_CODE_TTL_SECONDS:300}
+    resend-cooldown-seconds: ${BETA_AUTH_SMS_RESEND_COOLDOWN_SECONDS:60}
+    max-attempts: ${BETA_AUTH_SMS_MAX_ATTEMPTS:5}
+    demo-phone: ${BETA_AUTH_SMS_DEMO_PHONE:}
+    demo-code: ${BETA_AUTH_SMS_DEMO_CODE:}
+    otp-secret: ${BETA_AUTH_SMS_OTP_SECRET}
+  jwt:
+    issuer: birchat-beta
+    secret-base64: ${BETA_JWT_SECRET_BASE64}
+    access-ttl-seconds: 900
+    refresh-ttl-days: 30
+
+sms:
+  # Fail closed until Telegram Gateway is implemented. Never print real OTP in beta logs.
+  provider: ${BETA_SMS_PROVIDER:disabled}
+  smsc:
+    login: ${BETA_SMSC_LOGIN:}
+    password: ${BETA_SMSC_PASSWORD:}
+    api-key: ${BETA_SMSC_API_KEY:}
+    sender: ${BETA_SMSC_SENDER:}
+
+ai:
+  provider: ${BETA_AI_PROVIDER:mock}
+  glm:
+    api-key: ${BETA_AI_GLM_API_KEY:}
+    model: ${BETA_AI_GLM_MODEL:glm-4.5-air}
+    base-url: ${BETA_AI_GLM_BASE_URL:https://api.z.ai/api/paas/v4}
+    max-tokens: ${BETA_AI_GLM_MAX_TOKENS:1024}
+    temperature: ${BETA_AI_GLM_TEMPERATURE:0.6}
+  summary:
+    interval-hours: ${BETA_AI_SUMMARY_INTERVAL_HOURS:3}
+    max-messages: ${BETA_AI_SUMMARY_MAX_MESSAGES:100}
+    max-message-length: ${BETA_AI_SUMMARY_MAX_MESSAGE_LENGTH:500}
+    # '-' disables scheduler for beta until we explicitly enable it.
+    cron: "${BETA_AI_SUMMARY_CRON:-}"
+    zone: ${BETA_AI_SUMMARY_ZONE:Asia/Almaty}

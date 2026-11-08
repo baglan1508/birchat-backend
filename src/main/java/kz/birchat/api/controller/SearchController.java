@@ -1,5 +1,7 @@
 package kz.birchat.api.controller;
 
+import org.springframework.context.annotation.Profile;
+
 import kz.birchat.api.dto.SearchResultResponse;
 import kz.birchat.api.service.SearchService;
 import lombok.RequiredArgsConstructor;
@@ -8,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.UUID;
 
+@Profile("!beta")
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/companies/{companyId}/search")

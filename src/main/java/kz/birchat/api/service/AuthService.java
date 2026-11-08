@@ -10,6 +10,8 @@ import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -20,6 +22,8 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final SmsCodeService smsCodeService;
+    private final ObjectProvider<JwtTokenService> jwtTokenService;
+    @Value("${spring.profiles.active:}") private String activeProfile;
 
     public SendCodeResponse sendCode(SendCodeRequest request) {
         smsCodeService.sendCode(request.phone());
@@ -29,7 +33,6 @@ public class AuthService {
         );
     }
 
-    @Transactional
     public AuthResponse verifyCode(VerifyCodeRequest request) {
         String phone = smsCodeService.verifyCode(
                 request.phone(),
@@ -39,13 +42,20 @@ public class AuthService {
         UserEntity user = userRepository.findByPhone(phone)
                 .orElseGet(() -> createUser(phone));
 
+        kz.birchat.api.dto.TokenPairResponse pair = activeProfile.contains("beta")
+                ? jwtTokenService.getObject().issue(user) : null;
+        String accessToken = pair != null ? pair.accessToken() : "mock-access-token-" + user.getId();
+
         return new AuthResponse(
                 user.getId(),
                 user.getPhone(),
                 user.getFullName(),
                 user.getDisplayName(),
                 user.getInitials(),
-                "mock-access-token-" + user.getId()
+                accessToken,
+                pair == null ? null : pair.refreshToken(),
+                pair == null ? null : pair.tokenType(),
+                pair == null ? null : pair.expiresIn()
         );
     }
 

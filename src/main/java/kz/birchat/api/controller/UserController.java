@@ -1,5 +1,7 @@
 package kz.birchat.api.controller;
 
+import org.springframework.context.annotation.Profile;
+
 import jakarta.validation.Valid;
 import kz.birchat.api.dto.UpdateUserRequest;
 import kz.birchat.api.dto.UserResponse;
@@ -12,6 +14,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 
 import java.util.UUID;
 
+@Profile("!beta")
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/users")

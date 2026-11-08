@@ -1,5 +1,7 @@
 package kz.birchat.api.controller;
 
+import org.springframework.context.annotation.Profile;
+
 import kz.birchat.api.dto.CompanyFileResponse;
 import kz.birchat.api.service.CompanyFileService;
 import lombok.RequiredArgsConstructor;
@@ -13,6 +15,7 @@ import kz.birchat.api.dto.CompanyFileDownloadUrlResponse;
 import java.util.List;
 import java.util.UUID;
 
+@Profile("!beta")
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/companies/{companyId}/files")
