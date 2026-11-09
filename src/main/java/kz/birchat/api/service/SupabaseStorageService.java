@@ -51,7 +51,6 @@ public class SupabaseStorageService {
             restClient.post()
                     .uri("/storage/v1/object/" + properties.bucket() + "/" + storageKey)
                     .header("apikey", properties.serviceKey())
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.serviceKey())
                     .header(HttpHeaders.CONTENT_TYPE, contentType)
                     .header("x-upsert", "false")
                     .body(bytes)
@@ -179,12 +178,10 @@ public class SupabaseStorageService {
             Map<String, Object> response = restClient.post()
                     .uri("/storage/v1/object/sign/" + properties.bucket() + "/" + storageKey)
                     .header("apikey", properties.serviceKey())
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.serviceKey())
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(Map.of("expiresIn", safeExpiresIn))
                     .retrieve()
-                    .body(new ParameterizedTypeReference<>() {
-                    });
+                    .body(new ParameterizedTypeReference<>() {});
 
             if (response == null) {
                 throw ApiException.badRequest(

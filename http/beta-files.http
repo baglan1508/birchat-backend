@@ -1,0 +1,230 @@
+
+### 1. Загрузка файла в Beta Storage
+POST {{baseUrl}}/api/companies/{{companyId}}/files/upload
+Authorization: Bearer {{accessToken}}
+Content-Type: multipart/form-data; boundary=BirChatBoundary
+
+--BirChatBoundary
+Content-Disposition: form-data; name="file"; filename="test-upload.txt"
+Content-Type: text/plain
+
+< ./fixtures/test-upload.txt
+--BirChatBoundary--
+
+> {%
+    client.test("Файл загружен: 201", function() {
+        client.assert(response.status === 201);
+        client.assert(!!response.body.id);
+    });
+
+    if (response.status === 201 && response.body.id) {
+        client.global.set("fileId", response.body.id);
+        client.global.set("rawFileUrl", response.body.fileUrl);
+    }
+%}
+
+### 2. Получить список файлов компании
+GET {{baseUrl}}/api/companies/{{companyId}}/files?limit=10
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Список файлов: 200", function() {
+        client.assert(response.status === 200);
+        client.assert(Array.isArray(response.body));
+    });
+%}
+
+### 3. Получить конкретный файл
+GET {{baseUrl}}/api/companies/{{companyId}}/files/{{fileId}}
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Информация о файле: 200", function() {
+        client.assert(response.status === 200);
+        client.assert(response.body.id === client.global.get("fileId"));
+    });
+%}
+
+### 4. Получить временную ссылку
+GET {{baseUrl}}/api/companies/{{companyId}}/files/{{fileId}}/download-url?expiresInSeconds=300
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Signed URL получен: 200", function() {
+        client.assert(response.status === 200);
+        client.assert(!!response.body.downloadUrl);
+    });
+
+    if (response.status === 200 && response.body.downloadUrl) {
+        client.global.set("downloadUrl", response.body.downloadUrl);
+    }
+%}
+
+### 5. Прямая ссылка без авторизации
+GET {{rawFileUrl}}
+
+> {%
+    client.test("Приватный файл не доступен напрямую", function() {
+        client.assert(
+            response.status < 200 || response.status >= 300,
+            "Файл не должен быть публично доступен"
+        );
+    });
+%}
+
+### 6. Signed URL без JWT
+GET {{downloadUrl}}
+
+> {%
+    client.test("Signed URL разрешает скачивание", function() {
+        client.assert(
+            response.status === 200,
+            "Ожидали 200, получили " + response.status
+        );
+    });
+%}
+
+### Посторонний пользователь не может получить signed URL
+GET {{baseUrl}}/api/companies/{{companyId}}/files/{{fileId}}/download-url?expiresInSeconds=300
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Чужой файл недоступен", function() {
+        client.assert(response.status === 403);
+        client.assert(response.body.code === "NOT_A_MEMBER");
+    });
+%}
+
+
+### 7. ADMIN получает список файлов компании
+GET {{baseUrl}}/api/companies/{{companyId}}/files
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("ADMIN видит файлы компании", function() {
+        client.assert(response.status === 200);
+        client.assert(Array.isArray(response.body));
+    });
+%}
+
+### 8. ADMIN получает информацию о файле
+GET {{baseUrl}}/api/companies/{{companyId}}/files/{{fileId}}
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("ADMIN имеет доступ к файлу", function() {
+        client.assert(response.status === 200);
+    });
+%}
+
+### 9. ADMIN получает Signed URL
+GET {{baseUrl}}/api/companies/{{companyId}}/files/{{fileId}}/download-url?expiresInSeconds=300
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("ADMIN может скачать файл", function() {
+        client.assert(response.status === 200);
+        client.assert(!!response.body.downloadUrl);
+    });
+%}
+
+### 10. Посторонний не видит файлы компании
+GET {{baseUrl}}/api/companies/{{companyId}}/files
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Список чужих файлов запрещён", function() {
+        client.assert(response.status === 403);
+        client.assert(response.body.code === "NOT_A_MEMBER");
+    });
+%}
+
+### 11. Посторонний не может получить Signed URL
+GET {{baseUrl}}/api/companies/{{companyId}}/files/{{fileId}}/download-url
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Чужой Signed URL запрещён", function() {
+        client.assert(response.status === 403);
+        client.assert(response.body.code === "NOT_A_MEMBER");
+    });
+%}
+
+### 12. Посторонний не может получить информацию о файле
+GET {{baseUrl}}/api/companies/{{companyId}}/files/{{fileId}}
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Доступ к чужому файлу запрещён", function() {
+        client.assert(response.status === 403);
+        client.assert(response.body.code === "NOT_A_MEMBER");
+    });
+%}
+
+### 13. Посторонний не может загрузить файл
+POST {{baseUrl}}/api/companies/{{companyId}}/files/upload
+Authorization: Bearer {{accessToken}}
+Content-Type: multipart/form-data; boundary=BirChatBoundary
+
+--BirChatBoundary
+Content-Disposition: form-data; name="file"; filename="test-upload.txt"
+Content-Type: text/plain
+
+< ./fixtures/test-upload.txt
+--BirChatBoundary--
+
+> {%
+    client.test("Загрузка посторонним запрещена", function() {
+        client.assert(response.status === 403);
+        client.assert(response.body.code === "NOT_A_MEMBER");
+    });
+%}
+
+### 14. Приватный файл без авторизации Supabase
+GET {{rawFileUrl}}
+
+> {%
+    client.test("Прямой доступ к приватному файлу запрещён", function() {
+        client.assert(
+            response.status >= 400 && response.status < 500,
+            "Ожидали отказ 4xx, получили " + response.status
+        );
+    });
+%}
+
+### 15. Генерируем новую Signed URL
+### 15. Получаем свежую Signed URL
+GET {{baseUrl}}/api/companies/{{companyId}}/files/{{fileId}}/download-url?expiresInSeconds=300
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Signed URL получен", function() {
+        client.assert(response.status === 200);
+        client.assert(!!response.body.downloadUrl);
+    });
+
+    if (response.status === 200 && response.body.downloadUrl) {
+        client.global.set("downloadUrl", response.body.downloadUrl);
+    }
+%}
+
+### 16. Скачиваем напрямую из Supabase
+GET {{downloadUrl}}
+
+> {%
+    client.test("Signed URL работает без JWT", function() {
+        client.assert(response.status === 200);
+    });
+%}
+
+### 17. Проверка приватности через публичный маршрут Supabase
+GET https://cukokjzhsriszjofnagj.supabase.co/storage/v1/object/public/birchat-beta-files/companies/b1ff2b22-0c17-4023-9e0a-db00c5ba0e5c/2026-11-09/27962db5-b6a0-4cd4-a7f0-1f4fbfb1c26e.txt
+
+> {%
+    client.test("Приватный bucket не отдаёт публичный файл", function() {
+        client.assert(
+            response.status >= 400 && response.status < 500,
+            "Ожидали отказ 4xx, получили " + response.status
+        );
+    });
+%}
