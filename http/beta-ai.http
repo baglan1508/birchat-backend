@@ -1,0 +1,134 @@
+
+### 1. AI History без JWT
+GET {{baseUrl}}/api/companies/{{companyId}}/ai/history
+
+> {%
+    client.test("AI History требует авторизации", function() {
+        client.assert(response.status === 401);
+    });
+%}
+
+### 2. История AI текущего пользователя
+GET {{baseUrl}}/api/companies/{{companyId}}/ai/history?limit=20
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("История AI доступна участнику", function() {
+        client.assert(response.status === 200);
+        client.assert(Array.isArray(response.body.messages));
+    });
+%}
+
+### 3. Проверка подмены userId
+GET {{baseUrl}}/api/companies/{{companyId}}/ai/history?userId=00000000-0000-0000-0000-000000000001
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Подмена userId запрещена", function() {
+        client.assert(response.status === 403);
+    });
+%}
+
+### 4. Проверка отрицательного limit
+GET {{baseUrl}}/api/companies/{{companyId}}/ai/history?limit=0
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Некорректный limit запрещён", function() {
+        client.assert(response.status === 400);
+        client.assert(response.body.code === "VALIDATION");
+    });
+%}
+
+### 5. ADMIN не может получить директорскую AI-сводку
+GET {{baseUrl}}/api/companies/{{companyId}}/ai/director/summary/today
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("ADMIN не имеет доступа к сводке", function() {
+        client.assert(response.status === 403);
+    });
+%}
+
+### 6. Посторонний не может получить историю AI
+GET {{baseUrl}}/api/companies/{{companyId}}/ai/history
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Посторонний не получает историю AI", function() {
+        client.assert(response.status === 403);
+        client.assert(response.body.code === "NOT_A_MEMBER");
+    });
+%}
+
+### 7. Посторонний не может отправить запрос AI
+POST {{baseUrl}}/api/companies/{{companyId}}/ai/ask
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "question": "Тест проверки безопасности AI"
+}
+
+> {%
+    client.test("Посторонний не может обращаться к AI", function() {
+        client.assert(response.status === 403);
+        client.assert(response.body.code === "NOT_A_MEMBER");
+    });
+%}
+
+### 8. Проверяем первый запрос с AI-квотой
+POST {{baseUrl}}/api/companies/{{companyId}}/ai/ask
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "question": "Проверка работы AI quota в BirChat Beta"
+}
+
+> {%
+    client.test("AI запрос успешно обработан", function() {
+        client.assert(response.status === 200);
+    });
+%}
+
+### 9. Допустимый AI-запрос
+POST {{baseUrl}}/api/companies/{{companyId}}/ai/ask
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "question": "Тест ограничения AI quota"
+}
+
+> {%
+    client.test("AI запрос разрешён", function() {
+        client.assert(response.status === 200);
+        client.assert(response.body.model === "mock");
+    });
+%}
+
+### 10. Шестой AI-запрос должен быть заблокирован
+POST {{baseUrl}}/api/companies/{{companyId}}/ai/ask
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "question": "Проверка превышения AI quota"
+}
+
+> {%
+    client.test("Превышение лимита возвращает 429", function() {
+        client.assert(response.status === 429);
+        client.assert(response.body.code === "AI_QUOTA_EXCEEDED");
+    });
+%}
+
+### Проверка отката при превышении лимита компании
+POST {{baseUrl}}/api/companies/{{companyId}}/ai/ask
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "question": "Тест отката AI quota при превышении лимита компании"
+}

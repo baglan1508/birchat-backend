@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
+import kz.birchat.api.service.BetaAiQuotaService;
 
 import java.util.UUID;
 
@@ -19,13 +20,20 @@ import java.util.UUID;
 public class BetaAiController {
     private final AiService ai;
     private final BetaIdentityService identity;
+    private final BetaAiQuotaService quotaService;
 
     @PostMapping("/ask")
-    public AiAskResponse ask(@PathVariable UUID companyId,
-                             @AuthenticationPrincipal Jwt jwt,
-                             @RequestParam(required = false) UUID userId,
-                             @Valid @RequestBody AiAskRequest request) {
-        return ai.ask(companyId, identity.currentUserId(jwt, userId), request);
+    public AiAskResponse ask(
+            @PathVariable UUID companyId,
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) UUID userId,
+            @Valid @RequestBody AiAskRequest request
+    ) {
+        UUID actor = identity.currentUserId(jwt, userId);
+
+        quotaService.consumeForAsk(companyId, actor, request);
+
+        return ai.ask(companyId, actor, request);
     }
 
     @GetMapping("/history")
@@ -41,7 +49,7 @@ public class BetaAiController {
                                                       @AuthenticationPrincipal Jwt jwt,
                                                       @RequestParam(required = false) UUID userId) {
         UUID actor = identity.currentUserId(jwt, userId);
-        identity.requireDirector(companyId, actor);
-        return ai.getTodayDirectorSummary(companyId, actor);
+
+        return ai.getTodayDirectorSummaryBeta(companyId, actor);
     }
 }
