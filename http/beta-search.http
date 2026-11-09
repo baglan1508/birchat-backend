@@ -1,0 +1,89 @@
+
+### 1. Посторонний не может искать сообщения и файлы
+GET {{baseUrl}}/api/companies/{{companyId}}/search?query=test&limit=20
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Постороннему запрещён поиск", function() {
+        client.assert(response.status === 403);
+        client.assert(response.body.code === "NOT_A_MEMBER");
+    });
+%}
+
+### 2. Поиск без JWT
+GET {{baseUrl}}/api/companies/{{companyId}}/search?query=test&limit=20
+
+> {%
+    client.test("Поиск требует JWT", function() {
+        client.assert(response.status === 401);
+    });
+%}
+
+### 3. Поиск загруженного файла
+GET {{baseUrl}}/api/companies/{{companyId}}/search?query=test-upload&limit=20
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Поиск участником компании", function() {
+        client.assert(response.status === 200);
+        client.assert(Array.isArray(response.body));
+    });
+%}
+
+### 4. Слишком короткий запрос
+GET {{baseUrl}}/api/companies/{{companyId}}/search?query=a
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Минимальная длина поиска", function() {
+        client.assert(response.status === 400);
+        client.assert(response.body.code === "VALIDATION");
+    });
+%}
+
+### 5. Некорректный limit
+GET {{baseUrl}}/api/companies/{{companyId}}/search?query=%25%25&limit=20
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Проверка limit", function() {
+        client.assert(response.status === 400);
+        client.assert(response.body.code === "VALIDATION");
+    });
+%}
+
+### Поиск ранее загруженного файла
+GET {{baseUrl}}/api/companies/{{companyId}}/search?query=test-upload&limit=20
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Поиск файла работает", function() {
+        client.assert(response.status === 200);
+        client.assert(
+            response.body.some(item =>
+                item.type === "FILE" &&
+                item.title === "test-upload.txt"
+            )
+        );
+    });
+%}
+
+### Поиск буквальных %%
+GET {{baseUrl}}/api/companies/{{companyId}}/search?query=%25%25&limit=20
+Authorization: Bearer {{accessToken}}
+
+### Обычный поиск файла
+GET {{baseUrl}}/api/companies/{{companyId}}/search?query=test-upload&limit=20
+Authorization: Bearer {{accessToken}}
+
+### 6. Символы __ должны искаться буквально
+GET {{baseUrl}}/api/companies/{{companyId}}/search?query=%5F%5F&limit=20
+Authorization: Bearer {{accessToken}}
+
+> {%
+    client.test("Подчёркивание ищется буквально", function() {
+        client.assert(response.status === 200);
+        client.assert(Array.isArray(response.body));
+        client.assert(response.body.length === 0);
+    });
+%}

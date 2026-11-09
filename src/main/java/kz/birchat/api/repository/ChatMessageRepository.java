@@ -193,4 +193,21 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
             @Param("companyId") UUID companyId,
             @Param("after") LocalDateTime after
     );
+
+    @Query("""
+    SELECT m FROM ChatMessageEntity m
+    JOIN FETCH m.user u
+    JOIN m.chat ch
+    WHERE m.company.id = :companyId
+      AND ch.type = 'GENERAL'
+      AND m.isDeleted = false
+      AND m.content IS NOT NULL
+      AND LOCATE(LOWER(:query), LOWER(m.content)) > 0
+    ORDER BY m.createdAt DESC, m.id DESC
+    """)
+    List<ChatMessageEntity> searchGeneralMessages(
+            @Param("companyId") UUID companyId,
+            @Param("query") String query,
+            Pageable pageable
+    );
 }

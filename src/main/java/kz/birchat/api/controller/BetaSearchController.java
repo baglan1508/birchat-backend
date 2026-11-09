@@ -26,6 +26,6 @@ public class BetaSearchController {
                                              @RequestParam(required = false) UUID userId,
                                              @RequestParam String query,
                                              @RequestParam(defaultValue = "20") Integer limit) {
-        return searchService.search(companyId, identity.currentUserId(jwt, userId), query, limit);
+        return searchService.searchBeta(companyId, identity.currentUserId(jwt, userId), query, limit);
     }
 }

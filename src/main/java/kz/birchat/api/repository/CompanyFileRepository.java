@@ -30,4 +30,17 @@ public interface CompanyFileRepository extends JpaRepository<CompanyFileEntity, 
             @Param("query") String query,
             Pageable pageable
     );
+
+    @Query("""
+    SELECT f FROM CompanyFileEntity f
+    JOIN FETCH f.uploadedBy u
+    WHERE f.company.id = :companyId
+      AND LOCATE(LOWER(:query), LOWER(f.originalFileName)) > 0
+    ORDER BY f.createdAt DESC, f.id DESC
+    """)
+    List<CompanyFileEntity> searchFilesLiteral(
+            @Param("companyId") UUID companyId,
+            @Param("query") String query,
+            Pageable pageable
+    );
 }

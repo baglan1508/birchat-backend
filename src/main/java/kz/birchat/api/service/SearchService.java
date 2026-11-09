@@ -8,6 +8,7 @@ import kz.birchat.api.exception.ApiException;
 import kz.birchat.api.repository.ChatMessageRepository;
 import kz.birchat.api.repository.CompanyFileRepository;
 import kz.birchat.api.repository.CompanyMemberRepository;
+import kz.birchat.api.entity.ChatMessageEntity;
 import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -39,27 +40,61 @@ public class SearchService {
             String query,
             Integer limit
     ) {
+        return searchInternal(companyId, userId, query, limit, false);
+    }
+
+    @Transactional(readOnly = true)
+    public List<SearchResultResponse> searchBeta(
+            UUID companyId,
+            UUID userId,
+            String query,
+            Integer limit
+    ) {
+        return searchInternal(companyId, userId, query, limit, true);
+    }
+
+    private List<SearchResultResponse> searchInternal(
+            UUID companyId,
+            UUID userId,
+            String query,
+            Integer limit,
+            boolean generalOnly
+    ) {
         String normalizedQuery = normalizeQuery(query);
+        if (generalOnly && normalizedQuery.length() > 200) {
+            throw ApiException.badRequest(
+                    ApiErrorCode.VALIDATION,
+                    "query не должен превышать 200 символов"
+            );
+        }
         int safeLimit = normalizeLimit(limit);
 
         checkActiveMember(companyId, userId);
 
         PageRequest pageRequest = PageRequest.of(0, safeLimit);
 
-        List<SearchResultResponse> messageResults = chatMessageRepository
-                .searchMessages(companyId, normalizedQuery, pageRequest)
-                .stream()
+        List<ChatMessageEntity> messages = generalOnly
+                ? chatMessageRepository.searchGeneralMessages(
+                companyId, normalizedQuery, pageRequest)
+                : chatMessageRepository.searchMessages(
+                companyId, normalizedQuery, pageRequest);
+
+        List<SearchResultResponse> messageResults = messages.stream()
                 .map(this::toMessageResult)
                 .toList();
 
-        List<SearchResultResponse> fileResults = companyFileRepository
-                .searchFiles(companyId, normalizedQuery, pageRequest)
+        List<SearchResultResponse> fileResults = (generalOnly
+                ? companyFileRepository.searchFilesLiteral(
+                companyId, normalizedQuery, pageRequest)
+                : companyFileRepository.searchFiles(
+                companyId, normalizedQuery, pageRequest))
                 .stream()
                 .map(this::toFileResult)
                 .toList();
 
         return Stream.concat(messageResults.stream(), fileResults.stream())
-                .sorted(Comparator.comparing(SearchResultResponse::createdAt).reversed())
+                .sorted(Comparator.comparing(
+                        SearchResultResponse::createdAt).reversed())
                 .limit(safeLimit)
                 .toList();
     }
