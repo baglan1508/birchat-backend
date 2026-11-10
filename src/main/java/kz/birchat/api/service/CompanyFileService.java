@@ -312,8 +312,12 @@ public class CompanyFileService {
     /**
      * Шаг 3. Телефон сообщил, что загрузил файл. Проверяем, что файл действительно лежит
      * в хранилище и не больше лимита, фиксируем настоящие размер и тип и открываем доступ.
+     *
+     * noRollbackFor: при слишком большом файле запись удаляется и сразу выбрасывается 400 —
+     * без этого флага удаление записи откатилось бы вместе с транзакцией.
+     * Остальные ApiException здесь выбрасываются до любых изменений в базе.
      */
-    @Transactional
+    @Transactional(noRollbackFor = ApiException.class)
     public CompanyFileResponse completeUpload(UUID companyId, UUID fileId, UUID userId) {
         checkActiveMember(companyId, userId);
 
