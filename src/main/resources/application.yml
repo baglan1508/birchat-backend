@@ -1,6 +1,10 @@
 server:
   port: ${PORT:8080}
 
+# production — прод, staging — тестовое окружение (переменная APP_ENVIRONMENT на Render).
+app:
+  environment: ${APP_ENVIRONMENT:production}
+
 spring:
   application:
     name: birchat-backend
@@ -30,7 +34,7 @@ cleanup:
 # В Sentry уходят записи лога уровня ERROR: ошибки 5xx API и сбои фоновых задач.
 sentry:
   dsn: ${SENTRY_DSN:}
-  environment: ${SENTRY_ENVIRONMENT:production}
+  environment: ${SENTRY_ENVIRONMENT:${APP_ENVIRONMENT:production}}
   release: ${RENDER_GIT_COMMIT:}
   send-default-pii: false
   max-request-body-size: none

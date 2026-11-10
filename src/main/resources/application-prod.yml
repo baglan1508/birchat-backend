@@ -56,8 +56,9 @@ auth:
     code-ttl-seconds: ${AUTH_SMS_CODE_TTL_SECONDS:300}
     resend-cooldown-seconds: ${AUTH_SMS_RESEND_COOLDOWN_SECONDS:60}
     max-attempts: ${AUTH_SMS_MAX_ATTEMPTS:5}
-    demo-phone: ${AUTH_SMS_DEMO_PHONE}
-    demo-code: ${AUTH_SMS_DEMO_CODE}
+    # Demo-номер для App Store Review. Необязательно (на тестовом окружении не нужен).
+    demo-phone: ${AUTH_SMS_DEMO_PHONE:}
+    demo-code: ${AUTH_SMS_DEMO_CODE:}
     otp-secret: ${AUTH_SMS_OTP_SECRET}
     # Временно до запуска: одинаковый код для всех номеров. Пусто — выключено.
     fixed-code: ${AUTH_SMS_FIXED_CODE:}
