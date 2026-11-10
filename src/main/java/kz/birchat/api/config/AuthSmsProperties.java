@@ -9,6 +9,11 @@ public record AuthSmsProperties(
         Integer maxAttempts,
         String demoPhone,
         String demoCode,
-        String otpSecret
+        String otpSecret,
+        /*
+         * Временный режим до запуска в эксплуатацию: если задан, любой номер входит
+         * с этим кодом и никуда ничего не отправляется. Перед запуском — удалить.
+         */
+        String fixedCode
 ) {
 }
