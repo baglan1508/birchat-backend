@@ -51,7 +51,7 @@ public class SupabaseStorageService {
             restClient.post()
                     .uri("/storage/v1/object/" + properties.bucket() + "/" + storageKey)
                     .header("apikey", properties.serviceKey())
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.serviceKey())
+                    .headers(this::applyLegacyBearer)
                     .header(HttpHeaders.CONTENT_TYPE, contentType)
                     .header("x-upsert", "false")
                     .body(bytes)
@@ -179,7 +179,7 @@ public class SupabaseStorageService {
             Map<String, Object> response = restClient.post()
                     .uri("/storage/v1/object/sign/" + properties.bucket() + "/" + storageKey)
                     .header("apikey", properties.serviceKey())
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.serviceKey())
+                    .headers(this::applyLegacyBearer)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(Map.of("expiresIn", safeExpiresIn))
                     .retrieve()
@@ -258,5 +258,17 @@ public class SupabaseStorageService {
         }
 
         return baseUrl + "/storage/v1/" + signedUrl;
+    }
+
+    /**
+     * Старые service_role ключи Supabase — это JWT, их нужно передавать ещё и как Bearer.
+     * Новые секретные ключи (sb_secret_...) не являются JWT и передаются только в заголовке apikey.
+     */
+    private void applyLegacyBearer(HttpHeaders headers) {
+        String key = properties.serviceKey();
+
+        if (key != null && key.startsWith("eyJ")) {
+            headers.setBearerAuth(key);
+        }
     }
 }

@@ -67,7 +67,7 @@ public class SmsCodeService {
         authCodeRepository.save(entity);
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = ApiException.class)
     public String verifyCode(String rawPhone, String code) {
         String phone = PhoneUtils.normalize(rawPhone);
         LocalDateTime now = TimeUtils.utcNow();

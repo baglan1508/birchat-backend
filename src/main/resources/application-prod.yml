@@ -30,8 +30,9 @@ storage:
 auth:
   jwt:
     secret: ${AUTH_JWT_SECRET}
-    access-token-ttl-seconds: ${AUTH_JWT_ACCESS_TOKEN_TTL_SECONDS:2592000}
     issuer: ${AUTH_JWT_ISSUER:birchat}
+    access-ttl-seconds: ${AUTH_JWT_ACCESS_TTL_SECONDS:900}
+    refresh-ttl-days: ${AUTH_JWT_REFRESH_TTL_DAYS:30}
   sms:
     code-ttl-seconds: ${AUTH_SMS_CODE_TTL_SECONDS:300}
     resend-cooldown-seconds: ${AUTH_SMS_RESEND_COOLDOWN_SECONDS:60}

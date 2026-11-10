@@ -50,8 +50,11 @@ public class EmployeeService {
 
         String actorRole = actorMember.getRole().getCode();
 
-        if (!"DIRECTOR".equals(actorRole) && !"ADMIN".equals(actorRole)) {
-            throw new IllegalArgumentException("Недостаточно прав для добавления сотрудника");
+        if (!"DIRECTOR".equals(actorRole)) {
+            throw ApiException.forbidden(
+                    ApiErrorCode.FORBIDDEN,
+                    "Операция доступна только директору компании"
+            );
         }
 
         CompanyEntity company = companyRepository.findById(companyId)
@@ -63,11 +66,10 @@ public class EmployeeService {
                         "Роль не найдена"
                 ));
 
-        if (!"DIRECTOR".equals(actorMember.getRole().getCode())
-                && !"ADMIN".equals(actorMember.getRole().getCode())) {
-            throw ApiException.forbidden(
-                    ApiErrorCode.FORBIDDEN,
-                    "Недостаточно прав"
+        if ("DIRECTOR".equals(role.getCode())) {
+            throw ApiException.badRequest(
+                    ApiErrorCode.VALIDATION,
+                    "Назначать роль DIRECTOR через добавление сотрудника запрещено"
             );
         }
 

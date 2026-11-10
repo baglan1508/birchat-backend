@@ -10,6 +10,9 @@ public record AuthResponse(
         String displayName,
         String initials,
         String accessToken,
-        OffsetDateTime accessTokenExpiresAt
+        OffsetDateTime accessTokenExpiresAt,
+        String refreshToken,
+        String tokenType,
+        Long expiresIn
 ) {
 }

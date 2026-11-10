@@ -29,6 +29,7 @@ import kz.birchat.api.repository.AiThreadRepository;
 import kz.birchat.api.repository.ChatMessageRepository;
 import kz.birchat.api.repository.CompanyMemberRepository;
 import kz.birchat.api.repository.CompanyRepository;
+import kz.birchat.api.entity.CompanyMemberEntity;
 import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -144,7 +145,24 @@ public class AiService {
             UUID companyId,
             UUID userId
     ) {
-        checkActiveMember(companyId, userId);
+        CompanyMemberEntity member = companyMemberRepository
+                .findByCompanyIdAndUserIdAndStatus(
+                        companyId,
+                        userId,
+                        STATUS_ACTIVE
+                )
+                .orElseThrow(() -> ApiException.forbidden(
+                        ApiErrorCode.NOT_A_MEMBER,
+                        "Пользователь не состоит в компании"
+                ));
+
+        if (member.getRole() == null
+                || !"DIRECTOR".equals(member.getRole().getCode())) {
+            throw ApiException.forbidden(
+                    ApiErrorCode.FORBIDDEN,
+                    "Операция доступна только директору компании"
+            );
+        }
 
         AiCompanySummaryEntity summary = getFreshOrGenerateCompanySummary(companyId);
 
