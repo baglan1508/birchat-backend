@@ -5,8 +5,8 @@ import kz.birchat.api.entity.AuthCodeEntity;
 import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
 import kz.birchat.api.repository.AuthCodeRepository;
-import kz.birchat.api.service.sms.SmsSendResult;
-import kz.birchat.api.service.sms.SmsSender;
+import kz.birchat.api.service.otp.OtpSendResult;
+import kz.birchat.api.service.otp.OtpSender;
 import kz.birchat.api.util.PhoneUtils;
 import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
@@ -27,7 +27,7 @@ public class SmsCodeService {
 
     private final AuthCodeRepository authCodeRepository;
     private final AuthSmsProperties properties;
-    private final SmsSender smsSender;
+    private final OtpSender otpSender;
 
     private final SecureRandom secureRandom = new SecureRandom();
 
@@ -45,11 +45,10 @@ public class SmsCodeService {
         consumePreviousCodes(phone, now);
 
         String code = demoPhone ? properties.demoCode() : generateCode();
-        String message = "Ваш код BirChat: " + code;
 
-        SmsSendResult sendResult = demoPhone
-                ? new SmsSendResult("demo", null)
-                : smsSender.send(phone, message);
+        OtpSendResult sendResult = demoPhone
+                ? new OtpSendResult("demo", null)
+                : otpSender.send(phone, code, codeTtlSeconds());
 
         AuthCodeEntity entity = new AuthCodeEntity();
         entity.setId(UUID.randomUUID());

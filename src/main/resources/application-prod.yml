@@ -4,6 +4,23 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME}
     password: ${SPRING_DATASOURCE_PASSWORD}
     driver-class-name: org.postgresql.Driver
+    # Neon (serverless Postgres) засыпает после простоя и рвёт соединения.
+    # Пул не держит соединения без нужды (Neon может уснуть и не тратить compute),
+    # проверяет соединение перед выдачей и терпит холодный старт базы.
+    hikari:
+      pool-name: birchat-db
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:5}
+      minimum-idle: ${DB_POOL_MIN_IDLE:0}
+      idle-timeout: 120000
+      max-lifetime: 600000
+      connection-timeout: 30000
+      validation-timeout: 5000
+      initialization-fail-timeout: 60000
+      data-source-properties:
+        ApplicationName: birchat-backend
+        tcpKeepAlive: true
+        connectTimeout: 15
+        socketTimeout: 120
 
   jpa:
     hibernate:
@@ -20,6 +37,8 @@ spring:
     default-schema: birchat
     locations: classpath:db/migration
     baseline-on-migrate: true
+    connect-retries: 5
+    connect-retries-interval: 5
 
 storage:
   supabase:
@@ -41,14 +60,13 @@ auth:
     demo-code: ${AUTH_SMS_DEMO_CODE}
     otp-secret: ${AUTH_SMS_OTP_SECRET}
 
-sms:
-  provider: ${SMS_PROVIDER:smsc}
-
-  smsc:
-    login: ${SMSC_LOGIN:}
-    password: ${SMSC_PASSWORD:}
-    api-key: ${SMSC_API_KEY:}
-    sender: ${SMSC_SENDER:}
+otp:
+  # telegram — Telegram Gateway; disabled — только demo-номер; console — только для локальной разработки
+  provider: ${OTP_PROVIDER:telegram}
+  telegram:
+    access-token: ${TELEGRAM_GATEWAY_TOKEN:}
+    base-url: ${TELEGRAM_GATEWAY_BASE_URL:https://gatewayapi.telegram.org}
+    sender-username: ${TELEGRAM_GATEWAY_SENDER_USERNAME:}
 
 ai:
   provider: ${AI_PROVIDER:mock}
