@@ -1,0 +1,33 @@
+# Юнит-тесты на каждый PR и push в develop/main.
+# Сборка на Render идёт с -DskipTests (быстрый деплой), поэтому тесты гоняются здесь.
+# Тесты не ходят в базу и внешние сервисы, секреты не нужны.
+name: Tests
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run tests
+        run: mvn -B -ntp test
