@@ -1,6 +1,11 @@
 package kz.birchat.api.controller;
 
+import jakarta.validation.Valid;
 import kz.birchat.api.dto.CompanyFileResponse;
+import kz.birchat.api.dto.CreateUploadUrlRequest;
+import kz.birchat.api.dto.DownloadUrlItem;
+import kz.birchat.api.dto.DownloadUrlsRequest;
+import kz.birchat.api.dto.UploadUrlResponse;
 import kz.birchat.api.service.CompanyFileService;
 import kz.birchat.api.auth.CurrentUser;
 import lombok.RequiredArgsConstructor;
@@ -66,5 +71,42 @@ public class CompanyFileController {
                 userId,
                 expiresInSeconds
         );
+    }
+
+    /**
+     * Прямая загрузка, шаг 1: ссылка, по которой телефон загрузит файл прямо в хранилище.
+     */
+    @PostMapping("/upload-url")
+    @ResponseStatus(HttpStatus.CREATED)
+    public UploadUrlResponse createUploadUrl(
+            @PathVariable UUID companyId,
+            @CurrentUser UUID userId,
+            @Valid @RequestBody CreateUploadUrlRequest request
+    ) {
+        return companyFileService.createUploadUrl(companyId, userId, request);
+    }
+
+    /**
+     * Прямая загрузка, шаг 3: файл загружен — проверить и открыть доступ.
+     */
+    @PostMapping("/{fileId}/complete")
+    public CompanyFileResponse completeUpload(
+            @PathVariable UUID companyId,
+            @PathVariable UUID fileId,
+            @CurrentUser UUID userId
+    ) {
+        return companyFileService.completeUpload(companyId, fileId, userId);
+    }
+
+    /**
+     * Ссылки на скачивание для нескольких файлов сразу (показ фото внутри приложения).
+     */
+    @PostMapping("/download-urls")
+    public List<DownloadUrlItem> getDownloadUrls(
+            @PathVariable UUID companyId,
+            @CurrentUser UUID userId,
+            @Valid @RequestBody DownloadUrlsRequest request
+    ) {
+        return companyFileService.getDownloadUrls(companyId, userId, request);
     }
 }

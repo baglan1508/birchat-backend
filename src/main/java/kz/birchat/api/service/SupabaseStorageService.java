@@ -5,8 +5,13 @@ import kz.birchat.api.dto.StoredFileInfo;
 import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
@@ -14,12 +19,17 @@ import org.springframework.web.multipart.MultipartFile;
 import kz.birchat.api.dto.SignedUrlResponse;
 import org.springframework.core.ParameterizedTypeReference;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.io.IOException;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.Objects;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SupabaseStorageService {
@@ -31,11 +41,8 @@ public class SupabaseStorageService {
         validateFile(file);
 
         String originalFileName = normalizeOriginalFileName(file.getOriginalFilename());
-        String extension = extractExtension(originalFileName);
-        String storedFileName = UUID.randomUUID() + extension;
-
-        String storageKey = "companies/%s/%s/%s"
-                .formatted(companyId, LocalDate.now(), storedFileName);
+        String storedFileName = buildStoredFileName(originalFileName);
+        String storageKey = buildStorageKey(companyId, storedFileName);
 
         String contentType = file.getContentType() != null
                 ? file.getContentType()
@@ -83,6 +90,254 @@ public class SupabaseStorageService {
                     "Не удалось прочитать файл"
             );
         }
+    }
+
+    // ---- прямая загрузка с телефона в Supabase по подписанной ссылке ----
+
+    /** Подписанная ссылка на загрузку в Supabase действует 2 часа (ограничение Supabase). */
+    public static final long SIGNED_UPLOAD_URL_TTL_SECONDS = 2 * 60 * 60;
+
+    public String buildStoredFileName(String originalFileName) {
+        return UUID.randomUUID() + extractExtension(originalFileName);
+    }
+
+    public String buildStorageKey(UUID companyId, String storedFileName) {
+        return "companies/%s/%s/%s".formatted(companyId, LocalDate.now(), storedFileName);
+    }
+
+    public String normalizeFileName(String originalFileName) {
+        return normalizeOriginalFileName(originalFileName);
+    }
+
+    public String objectUrl(String storageKey) {
+        return removeTrailingSlash(properties.url())
+                + "/storage/v1/object/"
+                + properties.bucket()
+                + "/"
+                + storageKey;
+    }
+
+    /**
+     * Ссылка, по которой телефон сам загрузит файл в Supabase (PUT, тело — байты файла).
+     * Сервер в передаче данных не участвует.
+     */
+    public String createSignedUploadUrl(String storageKey) {
+        validateConfig();
+
+        try {
+            Map<String, Object> response = client().post()
+                    .uri("/storage/v1/object/upload/sign/" + properties.bucket() + "/" + storageKey)
+                    .header("apikey", properties.serviceKey())
+                    .headers(this::applyLegacyBearer)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of())
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+
+            Object url = response == null ? null : response.get("url");
+
+            if (url == null) {
+                url = response == null ? null : response.get("signedUrl");
+            }
+
+            if (url == null || url.toString().isBlank()) {
+                throw storageError("Storage не вернул ссылку для загрузки");
+            }
+
+            return toFullStorageUrl(url.toString());
+        } catch (RestClientResponseException ex) {
+            log.warn("Supabase upload sign failed. status={}", ex.getStatusCode().value());
+            throw storageError("Не удалось получить ссылку для загрузки: " + ex.getStatusCode().value());
+        }
+    }
+
+    /**
+     * Сведения о загруженном объекте или пусто, если объекта нет.
+     * Сначала GET /object/info (JSON), при неудаче — HEAD на сам объект (заголовки).
+     */
+    public Optional<StoredObjectInfo> getObjectInfo(String storageKey) {
+        validateConfig();
+
+        try {
+            Map<String, Object> info = client().get()
+                    .uri("/storage/v1/object/info/" + properties.bucket() + "/" + storageKey)
+                    .header("apikey", properties.serviceKey())
+                    .headers(this::applyLegacyBearer)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+
+            StoredObjectInfo parsed = parseObjectInfo(info);
+
+            if (parsed != null) {
+                return Optional.of(parsed);
+            }
+        } catch (RestClientResponseException ex) {
+            log.debug("Supabase object info failed, trying HEAD. status={}", ex.getStatusCode().value());
+        }
+
+        try {
+            ResponseEntity<Void> head = client().head()
+                    .uri("/storage/v1/object/" + properties.bucket() + "/" + storageKey)
+                    .header("apikey", properties.serviceKey())
+                    .headers(this::applyLegacyBearer)
+                    .retrieve()
+                    .toBodilessEntity();
+
+            long size = head.getHeaders().getContentLength();
+            MediaType type = head.getHeaders().getContentType();
+
+            return Optional.of(new StoredObjectInfo(
+                    size >= 0 ? size : null,
+                    type == null ? null : type.toString()
+            ));
+        } catch (RestClientResponseException ex) {
+            if (ex.getStatusCode().is4xxClientError()) {
+                return Optional.empty();
+            }
+
+            log.warn("Supabase object HEAD failed. status={}", ex.getStatusCode().value());
+            throw storageError("Не удалось проверить файл в хранилище");
+        }
+    }
+
+    /**
+     * Подписанные ссылки на скачивание сразу для многих файлов — одним запросом к Supabase.
+     *
+     * @return storageKey → полная ссылка (файлы, для которых Supabase вернул ошибку, пропускаются)
+     */
+    public Map<String, String> createSignedUrls(List<String> storageKeys, Integer expiresInSeconds) {
+        validateConfig();
+
+        if (storageKeys == null || storageKeys.isEmpty()) {
+            return Map.of();
+        }
+
+        int safeExpiresIn = normalizeExpiresIn(expiresInSeconds);
+
+        try {
+            List<Map<String, Object>> response = client().post()
+                    .uri("/storage/v1/object/sign/" + properties.bucket())
+                    .header("apikey", properties.serviceKey())
+                    .headers(this::applyLegacyBearer)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("expiresIn", safeExpiresIn, "paths", storageKeys))
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+
+            Map<String, String> result = new LinkedHashMap<>();
+
+            if (response == null) {
+                return result;
+            }
+
+            for (Map<String, Object> item : response) {
+                Object path = item.get("path");
+                Object signed = item.get("signedURL") != null ? item.get("signedURL") : item.get("signedUrl");
+
+                if (path != null && signed != null && item.get("error") == null) {
+                    result.put(path.toString(), toFullStorageUrl(signed.toString()));
+                }
+            }
+
+            return result;
+        } catch (RestClientResponseException ex) {
+            log.warn("Supabase batch sign failed. status={}", ex.getStatusCode().value());
+            throw storageError("Не удалось получить ссылки на файлы: " + ex.getStatusCode().value());
+        }
+    }
+
+    public int normalizeDownloadExpiresIn(Integer expiresInSeconds) {
+        return normalizeExpiresIn(expiresInSeconds);
+    }
+
+    /** Удаляет объекты из хранилища (например, недозагруженные файлы). */
+    public void deleteObjects(List<String> storageKeys) {
+        validateConfig();
+
+        if (storageKeys == null || storageKeys.isEmpty()) {
+            return;
+        }
+
+        try {
+            client().method(HttpMethod.DELETE)
+                    .uri("/storage/v1/object/" + properties.bucket())
+                    .header("apikey", properties.serviceKey())
+                    .headers(this::applyLegacyBearer)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("prefixes", storageKeys))
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RestClientResponseException ex) {
+            log.warn("Supabase delete failed. status={}", ex.getStatusCode().value());
+            throw storageError("Не удалось удалить файлы из хранилища");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    static StoredObjectInfo parseObjectInfo(Map<String, Object> info) {
+        if (info == null || info.isEmpty()) {
+            return null;
+        }
+
+        Map<String, Object> metadata = info.get("metadata") instanceof Map<?, ?> m
+                ? (Map<String, Object>) m
+                : Map.of();
+
+        Long size = firstLong(metadata.get("size"), metadata.get("contentLength"), info.get("size"));
+        String type = firstString(metadata.get("mimetype"), info.get("content_type"), info.get("contentType"));
+
+        if (size == null && type == null) {
+            return null;
+        }
+
+        return new StoredObjectInfo(size, type);
+    }
+
+    private static Long firstLong(Object... values) {
+        for (Object value : values) {
+            if (value instanceof Number n) {
+                return n.longValue();
+            }
+
+            if (value instanceof String s && !s.isBlank()) {
+                try {
+                    return Long.parseLong(s.trim());
+                } catch (NumberFormatException ignored) {
+                    // следующее значение
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static String firstString(Object... values) {
+        for (Object value : values) {
+            if (value != null && !value.toString().isBlank()) {
+                return value.toString();
+            }
+        }
+
+        return null;
+    }
+
+    /** Короткие служебные запросы к Supabase (подписи, проверки, удаление) — с таймаутами. */
+    private RestClient client() {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(Duration.ofSeconds(5));
+        requestFactory.setReadTimeout(Duration.ofSeconds(15));
+
+        return RestClient.builder()
+                .requestFactory(requestFactory)
+                .baseUrl(removeTrailingSlash(properties.url()))
+                .build();
+    }
+
+    private ApiException storageError(String message) {
+        return new ApiException(HttpStatus.BAD_GATEWAY, ApiErrorCode.STORAGE_ERROR, message);
+    }
+
+    public record StoredObjectInfo(Long size, String contentType) {
     }
 
     private void validateConfig() {
