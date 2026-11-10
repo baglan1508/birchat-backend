@@ -59,6 +59,8 @@ auth:
     demo-phone: ${AUTH_SMS_DEMO_PHONE}
     demo-code: ${AUTH_SMS_DEMO_CODE}
     otp-secret: ${AUTH_SMS_OTP_SECRET}
+    # Временно до запуска: одинаковый код для всех номеров. Пусто — выключено.
+    fixed-code: ${AUTH_SMS_FIXED_CODE:}
 
 otp:
   # telegram — Telegram Gateway; disabled — только demo-номер; console — только для локальной разработки

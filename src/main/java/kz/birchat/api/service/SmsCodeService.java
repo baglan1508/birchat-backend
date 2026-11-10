@@ -9,7 +9,9 @@ import kz.birchat.api.service.otp.OtpSendResult;
 import kz.birchat.api.service.otp.OtpSender;
 import kz.birchat.api.util.PhoneUtils;
 import kz.birchat.api.util.TimeUtils;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +23,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SmsCodeService {
@@ -31,24 +34,41 @@ public class SmsCodeService {
 
     private final SecureRandom secureRandom = new SecureRandom();
 
+    @PostConstruct
+    void warnIfFixedCode() {
+        if (isFixedCodeMode()) {
+            log.warn("OTP: включён режим одинакового кода (AUTH_SMS_FIXED_CODE). "
+                    + "Любой номер входит с этим кодом. Выключите перед запуском в эксплуатацию.");
+        }
+    }
+
     @Transactional
     public void sendCode(String rawPhone) {
         String phone = PhoneUtils.normalize(rawPhone);
         LocalDateTime now = TimeUtils.utcNow();
 
         boolean demoPhone = isDemoPhone(phone);
+        boolean fixedCode = !demoPhone && isFixedCodeMode();
 
-        if (!demoPhone) {
+        if (!demoPhone && !fixedCode) {
             checkResendCooldown(phone, now);
         }
 
         consumePreviousCodes(phone, now);
 
-        String code = demoPhone ? properties.demoCode() : generateCode();
+        String code;
+        OtpSendResult sendResult;
 
-        OtpSendResult sendResult = demoPhone
-                ? new OtpSendResult("demo", null)
-                : otpSender.send(phone, code, codeTtlSeconds());
+        if (demoPhone) {
+            code = properties.demoCode();
+            sendResult = new OtpSendResult("demo", null);
+        } else if (fixedCode) {
+            code = properties.fixedCode().trim();
+            sendResult = new OtpSendResult("fixed", null);
+        } else {
+            code = generateCode();
+            sendResult = otpSender.send(phone, code, codeTtlSeconds());
+        }
 
         AuthCodeEntity entity = new AuthCodeEntity();
         entity.setId(UUID.randomUUID());
@@ -190,6 +210,10 @@ public class SmsCodeService {
                     "Ошибка генерации hash кода"
             );
         }
+    }
+
+    private boolean isFixedCodeMode() {
+        return properties.fixedCode() != null && !properties.fixedCode().isBlank();
     }
 
     private boolean isDemoPhone(String phone) {
