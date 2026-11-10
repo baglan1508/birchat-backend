@@ -120,17 +120,18 @@ public class ChatService {
 
     public ChatMessageResponse createGeneralChatMessage(
             UUID companyId,
+            UUID userId,
             CreateChatMessageRequest request
     ) {
-        checkActiveMember(companyId, request.userId());
+        checkActiveMember(companyId, userId);
         CompanyEntity company = companyRepository.findById(companyId)
                 .orElseThrow(() -> new IllegalArgumentException("Компания не найдена: " + companyId));
 
         ChatEntity chat = chatRepository.findByCompanyIdAndType(companyId, "GENERAL")
                 .orElseThrow(() -> new IllegalArgumentException("Общий чат компании не найден"));
 
-        UserEntity user = userRepository.findById(request.userId())
-                .orElseThrow(() -> new IllegalArgumentException("Пользователь не найден: " + request.userId()));
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("Пользователь не найден: " + userId));
 
         LocalDateTime now = TimeUtils.utcNow();
 
@@ -308,9 +309,10 @@ public class ChatService {
     @Transactional
     public ChatMessageResponse createGeneralChatFileMessage(
             UUID companyId,
+            UUID userId,
             CreateFileMessageRequest request
     ) {
-        checkActiveMember(companyId, request.userId());
+        checkActiveMember(companyId, userId);
 
         CompanyEntity company = companyRepository.findById(companyId)
                 .orElseThrow(() -> ApiException.notFound(
@@ -320,7 +322,7 @@ public class ChatService {
 
         ChatEntity chat = findGeneralChat(companyId);
 
-        UserEntity user = userRepository.findById(request.userId())
+        UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> ApiException.notFound(
                         ApiErrorCode.USER_NOT_FOUND,
                         "Пользователь не найден"

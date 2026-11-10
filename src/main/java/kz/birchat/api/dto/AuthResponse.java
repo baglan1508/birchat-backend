@@ -1,5 +1,6 @@
 package kz.birchat.api.dto;
 
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record AuthResponse(
@@ -8,6 +9,7 @@ public record AuthResponse(
         String fullName,
         String displayName,
         String initials,
-        String accessToken
+        String accessToken,
+        OffsetDateTime accessTokenExpiresAt
 ) {
 }

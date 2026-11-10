@@ -2,6 +2,7 @@ package kz.birchat.api.controller;
 
 import kz.birchat.api.dto.CompanyFileResponse;
 import kz.birchat.api.service.CompanyFileService;
+import kz.birchat.api.auth.CurrentUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.HttpStatus;
@@ -23,7 +24,7 @@ public class CompanyFileController {
     @GetMapping
     public List<CompanyFileResponse> getCompanyFiles(
             @PathVariable UUID companyId,
-            @RequestParam UUID userId,
+            @CurrentUser UUID userId,
             @RequestParam(required = false) Integer limit
     ) {
         return companyFileService.getCompanyFiles(companyId, userId, limit);
@@ -33,7 +34,7 @@ public class CompanyFileController {
     public CompanyFileResponse getCompanyFile(
             @PathVariable UUID companyId,
             @PathVariable UUID fileId,
-            @RequestParam UUID userId
+            @CurrentUser UUID userId
     ) {
         return companyFileService.getCompanyFile(companyId, fileId, userId);
     }
@@ -45,7 +46,7 @@ public class CompanyFileController {
     @ResponseStatus(HttpStatus.CREATED)
     public CompanyFileResponse uploadFile(
             @PathVariable UUID companyId,
-            @RequestParam UUID userId,
+            @CurrentUser UUID userId,
             @RequestParam("file") MultipartFile file
     ) {
         return companyFileService.uploadFile(companyId, userId, file);
@@ -55,7 +56,7 @@ public class CompanyFileController {
     public CompanyFileDownloadUrlResponse getDownloadUrl(
             @PathVariable UUID companyId,
             @PathVariable UUID fileId,
-            @RequestParam UUID userId,
+            @CurrentUser UUID userId,
             @RequestParam(required = false) Integer expiresInSeconds
     ) {
         return companyFileService.getDownloadUrl(

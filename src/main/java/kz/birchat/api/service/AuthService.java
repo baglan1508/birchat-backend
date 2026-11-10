@@ -1,5 +1,6 @@
 package kz.birchat.api.service;
 
+import kz.birchat.api.auth.JwtService;
 import kz.birchat.api.dto.AuthResponse;
 import kz.birchat.api.dto.SendCodeRequest;
 import kz.birchat.api.dto.SendCodeResponse;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 @Service
@@ -20,6 +22,7 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final SmsCodeService smsCodeService;
+    private final JwtService jwtService;
 
     public SendCodeResponse sendCode(SendCodeRequest request) {
         smsCodeService.sendCode(request.phone());
@@ -39,13 +42,16 @@ public class AuthService {
         UserEntity user = userRepository.findByPhone(phone)
                 .orElseGet(() -> createUser(phone));
 
+        JwtService.IssuedToken accessToken = jwtService.issueAccessToken(user.getId());
+
         return new AuthResponse(
                 user.getId(),
                 user.getPhone(),
                 user.getFullName(),
                 user.getDisplayName(),
                 user.getInitials(),
-                "mock-access-token-" + user.getId()
+                accessToken.token(),
+                accessToken.expiresAt().atOffset(ZoneOffset.UTC)
         );
     }
 

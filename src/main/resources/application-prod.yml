@@ -28,6 +28,10 @@ storage:
     bucket: ${SUPABASE_BUCKET:birchat-files}
 
 auth:
+  jwt:
+    secret: ${AUTH_JWT_SECRET}
+    access-token-ttl-seconds: ${AUTH_JWT_ACCESS_TOKEN_TTL_SECONDS:2592000}
+    issuer: ${AUTH_JWT_ISSUER:birchat}
   sms:
     code-ttl-seconds: ${AUTH_SMS_CODE_TTL_SECONDS:300}
     resend-cooldown-seconds: ${AUTH_SMS_RESEND_COOLDOWN_SECONDS:60}

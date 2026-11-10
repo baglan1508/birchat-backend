@@ -2,6 +2,7 @@ package kz.birchat.api.controller;
 
 import kz.birchat.api.dto.SearchResultResponse;
 import kz.birchat.api.service.SearchService;
+import kz.birchat.api.auth.CurrentUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,7 +19,7 @@ public class SearchController {
     @GetMapping
     public List<SearchResultResponse> search(
             @PathVariable UUID companyId,
-            @RequestParam UUID userId,
+            @CurrentUser UUID userId,
             @RequestParam String query,
             @RequestParam(defaultValue = "20") Integer limit
     ) {
