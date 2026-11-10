@@ -1,0 +1,58 @@
+# Render Blueprint — тестовое окружение (staging) backend BirChat.
+# Прод (сервис birchat-backend) здесь НЕ описан и этим файлом не управляется.
+#
+# Репозиторий публичный: секретов в этом файле нет.
+#   sync: false      — Render попросит ввести значение при создании Blueprint;
+#   generateValue    — Render сам сгенерирует случайный секрет (256 бит).
+# Описание окружений и переменных: docs/environments.md
+
+services:
+  - type: web
+    name: birchat-backend-staging
+    runtime: docker
+    repo: https://github.com/baglan1508/birchat-backend
+    branch: develop
+    region: frankfurt
+    plan: 0.5c-512mb
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+      - key: APP_ENVIRONMENT
+        value: staging
+
+      # База: бета-проект Neon (birchat_beta)
+      - key: SPRING_DATASOURCE_URL
+        sync: false
+      - key: SPRING_DATASOURCE_USERNAME
+        sync: false
+      - key: SPRING_DATASOURCE_PASSWORD
+        sync: false
+
+      # Авторизация: свои секреты, не такие, как на проде
+      - key: AUTH_JWT_SECRET
+        generateValue: true
+      - key: AUTH_SMS_OTP_SECRET
+        generateValue: true
+      - key: AUTH_SMS_FIXED_CODE
+        sync: false
+      - key: OTP_PROVIDER
+        value: disabled
+
+      # Файлы: отдельный bucket
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: birchat-beta-files
+
+      # AI без расходов
+      - key: AI_PROVIDER
+        value: mock
+
+      # Sentry: тот же проект, события помечаются environment=staging
+      - key: SENTRY_DSN
+        sync: false
