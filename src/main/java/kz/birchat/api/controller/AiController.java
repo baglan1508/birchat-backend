@@ -5,6 +5,7 @@ import kz.birchat.api.dto.AiAskRequest;
 import kz.birchat.api.dto.AiAskResponse;
 import kz.birchat.api.dto.AiDirectorSummaryResponse;
 import kz.birchat.api.dto.AiHistoryResponse;
+import kz.birchat.api.service.AiQuotaService;
 import kz.birchat.api.service.AiService;
 import kz.birchat.api.auth.CurrentUser;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,7 @@ import java.util.UUID;
 public class AiController {
 
     private final AiService aiService;
+    private final AiQuotaService aiQuotaService;
 
     @PostMapping("/ask")
     public AiAskResponse ask(
@@ -25,6 +27,8 @@ public class AiController {
             @CurrentUser UUID userId,
             @Valid @RequestBody AiAskRequest request
     ) {
+        aiQuotaService.consumeForAsk(companyId, userId, request);
+
         return aiService.ask(
                 companyId,
                 userId,

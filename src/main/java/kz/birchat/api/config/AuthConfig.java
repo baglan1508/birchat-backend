@@ -6,8 +6,7 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 @EnableConfigurationProperties({
         AuthSmsProperties.class,
-        SmscProperties.class,
-        JwtProperties.class
+        TelegramGatewayProperties.class
 })
 public class AuthConfig {
 }

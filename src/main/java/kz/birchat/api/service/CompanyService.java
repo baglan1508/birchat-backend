@@ -171,6 +171,7 @@ public class CompanyService {
         generalChat.setCompany(savedCompany);
         generalChat.setName("Общий чат компании");
         generalChat.setType("GENERAL");
+        generalChat.setCreatedBy(owner);
         generalChat.setCreatedAt(now);
 
         chatRepository.save(generalChat);
@@ -185,7 +186,8 @@ public class CompanyService {
                 1,
                 directorRole.getCode(),
                 directorRole.getName(),
-                "Директор"
+                "Директор",
+                generalChat.getId()
         );
     }
 
@@ -207,7 +209,10 @@ public class CompanyService {
                 employeesCount,
                 member.getRole().getCode(),
                 member.getRole().getName(),
-                member.getPosition()
+                member.getPosition(),
+                chatRepository.findByCompanyIdAndType(company.getId(), "GENERAL")
+                        .map(ChatEntity::getId)
+                        .orElse(null)
         );
     }
 

@@ -47,9 +47,10 @@ public class CompanyFileController {
     public CompanyFileResponse uploadFile(
             @PathVariable UUID companyId,
             @CurrentUser UUID userId,
+            @RequestParam(value = "chatId", required = false) UUID chatId,
             @RequestParam("file") MultipartFile file
     ) {
-        return companyFileService.uploadFile(companyId, userId, file);
+        return companyFileService.uploadFile(companyId, userId, chatId, file);
     }
 
     @GetMapping("/{fileId}/download-url")

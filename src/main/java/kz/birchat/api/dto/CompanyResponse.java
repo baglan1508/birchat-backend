@@ -12,6 +12,7 @@ public record CompanyResponse(
         Integer employees,
         String role,
         String roleLabel,
-        String position
+        String position,
+        UUID generalChatId
 ) {
 }

@@ -11,3 +11,6 @@ spring:
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+
+otp:
+  provider: ${OTP_PROVIDER:console}

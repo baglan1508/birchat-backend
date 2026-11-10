@@ -10,6 +10,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import java.time.Duration;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -103,7 +105,14 @@ public class GlmAiProvider implements AiProvider {
             AiProperties.Glm glm,
             GlmChatRequest body
     ) {
-        RestClient restClient = restClientBuilder
+        SimpleClientHttpRequestFactory requestFactory =
+                new SimpleClientHttpRequestFactory();
+
+        requestFactory.setConnectTimeout(Duration.ofSeconds(5));
+        requestFactory.setReadTimeout(Duration.ofSeconds(60));
+
+        RestClient restClient = restClientBuilder.clone()
+                .requestFactory(requestFactory)
                 .baseUrl(normalizeBaseUrl(glm.getBaseUrl()))
                 .build();
 
@@ -121,11 +130,9 @@ public class GlmAiProvider implements AiProvider {
         } catch (ApiException ex) {
             throw ex;
         } catch (RestClientResponseException ex) {
-            log.error(
-                    "GLM API error. status={}, body={}",
-                    ex.getStatusCode(),
-                    ex.getResponseBodyAsString(),
-                    ex
+            log.warn(
+                    "GLM API request failed. status={}",
+                    ex.getStatusCode().value()
             );
 
             throw new ApiException(

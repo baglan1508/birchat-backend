@@ -32,6 +32,7 @@ public class UserService {
     private final UserRepository userRepository;
     private final CompanyMemberRepository companyMemberRepository;
     private final RoleRepository roleRepository;
+    private final JwtTokenService jwtTokenService;
 
     @Transactional(readOnly = true)
     public UserResponse getMe(UUID userId) {
@@ -107,6 +108,8 @@ public class UserService {
             membership.setStatus(STATUS_INACTIVE);
             companyMemberRepository.save(membership);
         }
+
+        jwtTokenService.revokeAll(userId);
 
         user.setIsActive(false);
         user.setPhone(buildDeletedPhone(user.getId()));

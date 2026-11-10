@@ -1,7 +1,7 @@
 package kz.birchat.api.service;
 
-import kz.birchat.api.auth.JwtService;
 import kz.birchat.api.dto.AuthResponse;
+import kz.birchat.api.dto.TokenPairResponse;
 import kz.birchat.api.dto.SendCodeRequest;
 import kz.birchat.api.dto.SendCodeResponse;
 import kz.birchat.api.dto.VerifyCodeRequest;
@@ -10,10 +10,8 @@ import kz.birchat.api.repository.UserRepository;
 import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.UUID;
 
 @Service
@@ -22,7 +20,7 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final SmsCodeService smsCodeService;
-    private final JwtService jwtService;
+    private final JwtTokenService jwtTokenService;
 
     public SendCodeResponse sendCode(SendCodeRequest request) {
         smsCodeService.sendCode(request.phone());
@@ -32,7 +30,10 @@ public class AuthService {
         );
     }
 
-    @Transactional
+    /**
+     * Без внешней транзакции: неудачные попытки ввода кода должны сохраняться
+     * (SmsCodeService.verifyCode помечен noRollbackFor = ApiException).
+     */
     public AuthResponse verifyCode(VerifyCodeRequest request) {
         String phone = smsCodeService.verifyCode(
                 request.phone(),
@@ -42,7 +43,7 @@ public class AuthService {
         UserEntity user = userRepository.findByPhone(phone)
                 .orElseGet(() -> createUser(phone));
 
-        JwtService.IssuedToken accessToken = jwtService.issueAccessToken(user.getId());
+        TokenPairResponse tokens = jwtTokenService.issue(user);
 
         return new AuthResponse(
                 user.getId(),
@@ -50,8 +51,11 @@ public class AuthService {
                 user.getFullName(),
                 user.getDisplayName(),
                 user.getInitials(),
-                accessToken.token(),
-                accessToken.expiresAt().atOffset(ZoneOffset.UTC)
+                tokens.accessToken(),
+                TimeUtils.utcOffsetNow().plusSeconds(tokens.expiresIn()),
+                tokens.refreshToken(),
+                tokens.tokenType(),
+                tokens.expiresIn()
         );
     }
 

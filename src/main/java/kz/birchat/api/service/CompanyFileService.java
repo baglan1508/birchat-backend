@@ -1,6 +1,9 @@
 package kz.birchat.api.service;
 
+import kz.birchat.api.auth.CurrentUserService;
 import kz.birchat.api.dto.CompanyFileResponse;
+import kz.birchat.api.entity.ChatEntity;
+import kz.birchat.api.entity.CompanyMemberEntity;
 import kz.birchat.api.entity.CompanyFileEntity;
 import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
@@ -33,15 +36,21 @@ public class CompanyFileService {
     private final CompanyRepository companyRepository;
     private final UserRepository userRepository;
     private final SupabaseStorageService supabaseStorageService;
+    private final ChatAccessService chatAccessService;
 
     @Transactional(readOnly = true)
     public List<CompanyFileResponse> getCompanyFiles(UUID companyId, UUID userId, Integer limit) {
-        checkActiveMember(companyId, userId);
+        CompanyMemberEntity member = checkActiveMember(companyId, userId);
 
         int safeLimit = normalizeLimit(limit);
 
         return companyFileRepository
-                .findByCompanyIdOrderByCreatedAtDesc(companyId, PageRequest.of(0, safeLimit))
+                .findAccessibleFiles(
+                        companyId,
+                        userId,
+                        CurrentUserService.isDirector(member),
+                        PageRequest.of(0, safeLimit)
+                )
                 .stream()
                 .map(this::toResponse)
                 .toList();
@@ -49,19 +58,12 @@ public class CompanyFileService {
 
     @Transactional(readOnly = true)
     public CompanyFileResponse getCompanyFile(UUID companyId, UUID fileId, UUID userId) {
-        checkActiveMember(companyId, userId);
+        CompanyMemberEntity member = checkActiveMember(companyId, userId);
 
-        CompanyFileEntity file = companyFileRepository.findById(fileId)
-                .filter(item -> companyId.equals(item.getCompany().getId()))
-                .orElseThrow(() -> ApiException.notFound(
-                        ApiErrorCode.FILE_NOT_FOUND,
-                        "Файл не найден"
-                ));
-
-        return toResponse(file);
+        return toResponse(findAccessibleFile(companyId, fileId, userId, member));
     }
 
-    private void checkActiveMember(UUID companyId, UUID userId) {
+    private CompanyMemberEntity checkActiveMember(UUID companyId, UUID userId) {
         if (userId == null) {
             throw ApiException.badRequest(
                     ApiErrorCode.VALIDATION,
@@ -69,10 +71,28 @@ public class CompanyFileService {
             );
         }
 
-        companyMemberRepository.findByCompanyIdAndUserIdAndStatus(companyId, userId, "ACTIVE")
+        return companyMemberRepository.findByCompanyIdAndUserIdAndStatus(companyId, userId, "ACTIVE")
                 .orElseThrow(() -> ApiException.forbidden(
                         ApiErrorCode.NOT_A_MEMBER,
                         "Пользователь не состоит в этой компании"
+                ));
+    }
+
+    /**
+     * Файл чужой группы отдаём как «не найден», чтобы не раскрывать его существование.
+     */
+    private CompanyFileEntity findAccessibleFile(
+            UUID companyId,
+            UUID fileId,
+            UUID userId,
+            CompanyMemberEntity member
+    ) {
+        return companyFileRepository.findById(fileId)
+                .filter(item -> companyId.equals(item.getCompany().getId()))
+                .filter(item -> chatAccessService.canAccessFile(item, member, userId))
+                .orElseThrow(() -> ApiException.notFound(
+                        ApiErrorCode.FILE_NOT_FOUND,
+                        "Файл не найден"
                 ));
     }
 
@@ -102,12 +122,26 @@ public class CompanyFileService {
                 file.getContentType(),
                 file.getFileSize(),
                 file.getFileUrl(),
-                TimeUtils.toUtcOffset(file.getCreatedAt())
+                TimeUtils.toUtcOffset(file.getCreatedAt()),
+                file.getChat() == null ? null : file.getChat().getId()
         );
     }
     @Transactional
-    public CompanyFileResponse uploadFile(UUID companyId, UUID userId, MultipartFile multipartFile) {
+    public CompanyFileResponse uploadFile(
+            UUID companyId,
+            UUID userId,
+            UUID chatId,
+            MultipartFile multipartFile
+    ) {
         checkActiveMember(companyId, userId);
+
+        // Файл для группы сразу привязываем к ней: его увидят только участники группы.
+        ChatEntity chat = null;
+
+        if (chatId != null) {
+            ChatEntity target = chatAccessService.requireReadableChat(companyId, chatId, userId);
+            chat = ChatAccessService.isGroup(target) ? target : null;
+        }
 
         CompanyEntity company = companyRepository.findById(companyId)
                 .orElseThrow(() -> ApiException.notFound(
@@ -127,6 +161,7 @@ public class CompanyFileService {
         entity.setId(UUID.randomUUID());
         entity.setCompany(company);
         entity.setUploadedBy(user);
+        entity.setChat(chat);
         entity.setFileName(storedFile.fileName());
         entity.setOriginalFileName(storedFile.originalFileName());
         entity.setContentType(storedFile.contentType());
@@ -148,14 +183,9 @@ public class CompanyFileService {
             UUID userId,
             Integer expiresInSeconds
     ) {
-        checkActiveMember(companyId, userId);
+        CompanyMemberEntity member = checkActiveMember(companyId, userId);
 
-        CompanyFileEntity file = companyFileRepository.findById(fileId)
-                .filter(item -> companyId.equals(item.getCompany().getId()))
-                .orElseThrow(() -> ApiException.notFound(
-                        ApiErrorCode.FILE_NOT_FOUND,
-                        "Файл не найден"
-                ));
+        CompanyFileEntity file = findAccessibleFile(companyId, fileId, userId, member);
 
         SignedUrlResponse signedUrl = supabaseStorageService.createSignedUrl(
                 file.getStorageKey(),

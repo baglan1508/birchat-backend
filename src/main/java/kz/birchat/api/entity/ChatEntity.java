@@ -26,6 +26,10 @@ public class ChatEntity {
     @Column(name = "type", nullable = false)
     private String type;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "created_by")
+    private UserEntity createdBy;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 }
