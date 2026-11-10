@@ -8,6 +8,10 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:local}
 
+  jpa:
+    # Соединение с базой держится только на время транзакции, а не всего HTTP-запроса.
+    open-in-view: false
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html

@@ -1,7 +1,6 @@
 package kz.birchat.api.service;
 
 import jakarta.persistence.EntityManager;
-import kz.birchat.api.ai.AiProvider;
 import kz.birchat.api.ai.AiProviderMessage;
 import kz.birchat.api.ai.AiProviderRequest;
 import kz.birchat.api.ai.AiProviderResolver;
@@ -36,7 +35,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -75,120 +76,142 @@ public class AiService {
     private final AiProviderResolver aiProviderResolver;
     private final AiProperties aiProperties;
     private final EntityManager entityManager;
+    private final PlatformTransactionManager transactionManager;
 
-    @Transactional
+    private record AskContext(String question, List<AiProviderMessage> chatContext) {
+    }
+
+    private TransactionTemplate tx() {
+        return new TransactionTemplate(transactionManager);
+    }
+
+    private TransactionTemplate readTx() {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setReadOnly(true);
+        return template;
+    }
+
+    /**
+     * Вопрос к AI. Транзакции короткие: соединение с базой не занято, пока ждём ответ модели
+     * (до 60 секунд). Вопрос и ответ сохраняются вместе только после успешного ответа.
+     */
     public AiAskResponse ask(
             UUID companyId,
             UUID userId,
             AiAskRequest request
     ) {
-        checkActiveMember(companyId, userId);
+        LocalDateTime askedAt = TimeUtils.utcNow();
 
-        String question = normalizeQuestion(request);
-        LocalDateTime now = TimeUtils.utcNow();
+        // 1. Короткое чтение: права и контекст общего чата.
+        AskContext context = readTx().execute(status -> {
+            checkActiveMember(companyId, userId);
+            String question = normalizeQuestion(request);
+            return new AskContext(question, loadRecentGeneralChatContext(companyId));
+        });
 
-        AiThreadEntity thread = getOrCreateDefaultThread(
-                companyId,
-                userId,
-                question,
-                now
-        );
-
-        saveMessage(
-                thread,
-                AiMessageRole.USER,
-                question,
-                null,
-                now
-        );
-
-        List<AiProviderMessage> contextMessages = loadRecentGeneralChatContext(companyId);
-
-        AiProvider provider = aiProviderResolver.resolve();
-
-        AiProviderResponse providerResponse = provider.ask(
+        // 2. Вызов модели — вне транзакции.
+        AiProviderResponse providerResponse = aiProviderResolver.resolve().ask(
                 new AiProviderRequest(
                         companyId,
                         userId,
-                        question,
-                        contextMessages
+                        context.question(),
+                        context.chatContext()
                 )
         );
 
-        String answer = providerResponse.answer();
-        String model = providerResponse.model();
+        // 3. Короткая запись: вопрос и ответ.
+        return tx().execute(status -> {
+            AiThreadEntity thread = getOrCreateDefaultThread(
+                    companyId,
+                    userId,
+                    context.question(),
+                    askedAt
+            );
 
-        LocalDateTime answerCreatedAt = TimeUtils.utcNow();
+            saveMessage(thread, AiMessageRole.USER, context.question(), null, askedAt);
 
-        AiMessageEntity assistantMessage = saveMessage(
-                thread,
-                AiMessageRole.ASSISTANT,
-                answer,
-                model,
-                answerCreatedAt
-        );
+            LocalDateTime answerCreatedAt = TimeUtils.utcNow();
 
-        thread.setUpdatedAt(answerCreatedAt);
-        aiThreadRepository.save(thread);
+            AiMessageEntity assistantMessage = saveMessage(
+                    thread,
+                    AiMessageRole.ASSISTANT,
+                    providerResponse.answer(),
+                    providerResponse.model(),
+                    answerCreatedAt
+            );
 
-        return new AiAskResponse(
-                thread.getId(),
-                assistantMessage.getId(),
-                answer,
-                model,
-                TimeUtils.toUtcOffset(answerCreatedAt)
-        );
+            thread.setUpdatedAt(answerCreatedAt);
+            aiThreadRepository.save(thread);
+
+            return new AiAskResponse(
+                    thread.getId(),
+                    assistantMessage.getId(),
+                    providerResponse.answer(),
+                    providerResponse.model(),
+                    TimeUtils.toUtcOffset(answerCreatedAt)
+            );
+        });
     }
 
-    @Transactional
     public AiDirectorSummaryResponse getTodayDirectorSummary(
             UUID companyId,
             UUID userId
     ) {
-        CompanyMemberEntity member = companyMemberRepository
-                .findByCompanyIdAndUserIdAndStatus(
-                        companyId,
-                        userId,
-                        STATUS_ACTIVE
-                )
-                .orElseThrow(() -> ApiException.forbidden(
-                        ApiErrorCode.NOT_A_MEMBER,
-                        "Пользователь не состоит в компании"
-                ));
+        AiDirectorSummaryResponse fresh = readTx().execute(status -> {
+            requireDirector(companyId, userId);
 
-        if (member.getRole() == null
-                || !"DIRECTOR".equals(member.getRole().getCode())) {
-            throw ApiException.forbidden(
-                    ApiErrorCode.FORBIDDEN,
-                    "Операция доступна только директору компании"
-            );
+            return findFreshSummary(companyId)
+                    .map(this::toDirectorSummaryResponse)
+                    .orElse(null);
+        });
+
+        if (fresh != null) {
+            return fresh;
         }
 
-        AiCompanySummaryEntity summary = getFreshOrGenerateCompanySummary(companyId);
+        try {
+            return toDirectorSummaryResponse(
+                    generateAndSaveCompanySummary(companyId, TimeUtils.utcNow())
+            );
+        } catch (Exception ex) {
+            log.error(
+                    "Failed to generate fresh AI summary. Trying to return latest existing summary. companyId={}",
+                    companyId,
+                    ex
+            );
 
-        return toDirectorSummaryResponse(summary);
+            return readTx().execute(status -> aiCompanySummaryRepository
+                    .findFirstByCompanyIdOrderByGeneratedAtDesc(companyId)
+                    .map(this::toDirectorSummaryResponse)
+                    .orElseThrow(() -> new ApiException(
+                            HttpStatus.INTERNAL_SERVER_ERROR,
+                            ApiErrorCode.INTERNAL_ERROR,
+                            "Не удалось сформировать AI-сводку"
+                    )));
+        }
     }
 
-    @Transactional
+    /**
+     * Фоновое обновление сводок. Каждая компания — отдельно: ошибка одной не откатывает остальные,
+     * и соединение с базой не держится, пока модель формирует сводку.
+     */
     public void refreshCompanySummaries() {
-        List<CompanyEntity> companies = companyRepository.findByStatus(STATUS_ACTIVE);
+        List<UUID> companyIds = readTx().execute(status -> companyRepository
+                .findByStatus(STATUS_ACTIVE)
+                .stream()
+                .filter(company -> company != null && company.getId() != null)
+                .map(CompanyEntity::getId)
+                .toList());
 
-        log.info("AI company summary refresh started. companiesCount={}", companies.size());
+        log.info("AI company summary refresh started. companiesCount={}", companyIds.size());
 
-        for (CompanyEntity company : companies) {
-            if (company == null || company.getId() == null) {
-                continue;
-            }
-
+        for (UUID companyId : companyIds) {
             try {
-                generateAndSaveCompanySummary(
-                        company.getId(),
-                        TimeUtils.utcNow()
-                );
+                generateAndSaveCompanySummary(companyId, TimeUtils.utcNow());
             } catch (Exception ex) {
                 log.error(
                         "Failed to refresh AI company summary. companyId={}",
-                        company.getId(),
+                        companyId,
                         ex
                 );
             }
@@ -231,35 +254,36 @@ public class AiService {
                 ));
     }
 
-    private AiCompanySummaryEntity getFreshOrGenerateCompanySummary(UUID companyId) {
-        LocalDateTime now = TimeUtils.utcNow();
-        LocalDateTime freshAfter = now.minusHours(summaryIntervalHours());
+    private void requireDirector(UUID companyId, UUID userId) {
+        CompanyMemberEntity member = companyMemberRepository
+                .findByCompanyIdAndUserIdAndStatus(
+                        companyId,
+                        userId,
+                        STATUS_ACTIVE
+                )
+                .orElseThrow(() -> ApiException.forbidden(
+                        ApiErrorCode.NOT_A_MEMBER,
+                        "Пользователь не состоит в компании"
+                ));
+
+        if (member.getRole() == null
+                || !"DIRECTOR".equals(member.getRole().getCode())) {
+            throw ApiException.forbidden(
+                    ApiErrorCode.FORBIDDEN,
+                    "Операция доступна только директору компании"
+            );
+        }
+    }
+
+    private java.util.Optional<AiCompanySummaryEntity> findFreshSummary(UUID companyId) {
+        LocalDateTime freshAfter = TimeUtils.utcNow().minusHours(summaryIntervalHours());
 
         return aiCompanySummaryRepository
                 .findFirstByCompanyIdAndGeneratedAtAfterOrderByGeneratedAtDesc(
                         companyId,
                         freshAfter
                 )
-                .filter(summary -> !hasNewMessagesAfterSummary(companyId, summary))
-                .orElseGet(() -> {
-                    try {
-                        return generateAndSaveCompanySummary(companyId, now);
-                    } catch (Exception ex) {
-                        log.error(
-                                "Failed to generate fresh AI summary. Trying to return latest existing summary. companyId={}",
-                                companyId,
-                                ex
-                        );
-
-                        return aiCompanySummaryRepository
-                                .findFirstByCompanyIdOrderByGeneratedAtDesc(companyId)
-                                .orElseThrow(() -> new ApiException(
-                                        HttpStatus.INTERNAL_SERVER_ERROR,
-                                        ApiErrorCode.INTERNAL_ERROR,
-                                        "Не удалось сформировать AI-сводку"
-                                ));
-                    }
-                });
+                .filter(summary -> !hasNewMessagesAfterSummary(companyId, summary));
     }
 
     private boolean hasNewMessagesAfterSummary(
@@ -285,15 +309,15 @@ public class AiService {
         LocalDateTime periodStart = buildTodayPeriodStartUtc(now);
         LocalDateTime periodEnd = now;
 
-        List<AiProviderMessage> contextMessages = loadSummaryChatContext(
+        // 1. Короткое чтение сообщений за период.
+        List<AiProviderMessage> contextMessages = readTx().execute(status -> loadSummaryChatContext(
                 companyId,
                 periodStart,
                 periodEnd
-        );
+        ));
 
-        AiProvider provider = aiProviderResolver.resolve();
-
-        AiSummaryProviderResponse providerResponse = provider.summarize(
+        // 2. Вызов модели — вне транзакции.
+        AiSummaryProviderResponse providerResponse = aiProviderResolver.resolve().summarize(
                 new AiSummaryProviderRequest(
                         companyId,
                         periodStart,
@@ -302,6 +326,17 @@ public class AiService {
                 )
         );
 
+        // 3. Короткая запись сводки.
+        return tx().execute(status -> saveSummary(companyId, providerResponse, periodStart, periodEnd, now));
+    }
+
+    private AiCompanySummaryEntity saveSummary(
+            UUID companyId,
+            AiSummaryProviderResponse providerResponse,
+            LocalDateTime periodStart,
+            LocalDateTime periodEnd,
+            LocalDateTime now
+    ) {
         CompanyEntity companyRef = entityManager.getReference(
                 CompanyEntity.class,
                 companyId

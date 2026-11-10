@@ -1,7 +1,14 @@
 package kz.birchat.api.service;
 
 import jakarta.persistence.EntityManager;
+import kz.birchat.api.ai.AiProvider;
 import kz.birchat.api.ai.AiProviderResolver;
+import kz.birchat.api.ai.AiProviderResponse;
+import kz.birchat.api.dto.AiAskResponse;
+import kz.birchat.api.entity.AiMessageEntity;
+import kz.birchat.api.entity.AiThreadEntity;
+import org.mockito.InOrder;
+import org.springframework.transaction.PlatformTransactionManager;
 import kz.birchat.api.config.AiProperties;
 import kz.birchat.api.dto.AiAskRequest;
 import kz.birchat.api.exception.ApiErrorCode;
@@ -17,6 +24,7 @@ import kz.birchat.api.entity.AiCompanySummaryEntity;
 import kz.birchat.api.entity.CompanyMemberEntity;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 
@@ -54,6 +62,9 @@ class AiServiceTest {
 
     @Mock
     private EntityManager entityManager;
+
+    @Mock
+    private PlatformTransactionManager transactionManager;
 
     @InjectMocks
     private AiService aiService;
@@ -181,5 +192,54 @@ class AiServiceTest {
 
         verifyNoInteractions(aiProviderResolver);
         verify(aiCompanySummaryRepository, never()).save(any());
+    }
+
+    @Test
+    void modelIsCalledOnlyAfterReadTransactionIsClosed() {
+        UUID userId = UUID.randomUUID();
+        AiProvider provider = mockMemberAndProvider(userId);
+
+        when(provider.ask(any())).thenReturn(new AiProviderResponse("Ответ", "mock"));
+        when(aiThreadRepository.findDefaultThread(companyId, userId))
+                .thenReturn(Optional.of(new AiThreadEntity()));
+        when(aiMessageRepository.save(any(AiMessageEntity.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AiAskResponse response = aiService.ask(companyId, userId, new AiAskRequest("Что нового?"));
+
+        assertEquals("Ответ", response.answer());
+
+        InOrder order = inOrder(transactionManager, provider);
+        order.verify(transactionManager).commit(any());
+        order.verify(provider).ask(any());
+        order.verify(transactionManager).getTransaction(any());
+
+        // вопрос и ответ
+        verify(aiMessageRepository, times(2)).save(any(AiMessageEntity.class));
+    }
+
+    @Test
+    void nothingIsSavedWhenModelFails() {
+        UUID userId = UUID.randomUUID();
+        AiProvider provider = mockMemberAndProvider(userId);
+
+        when(provider.ask(any())).thenThrow(new ApiException(
+                HttpStatus.SERVICE_UNAVAILABLE, ApiErrorCode.INTERNAL_ERROR, "AI недоступен"));
+
+        assertThrows(ApiException.class,
+                () -> aiService.ask(companyId, userId, new AiAskRequest("Что нового?")));
+
+        verifyNoInteractions(aiThreadRepository, aiMessageRepository);
+    }
+
+    private AiProvider mockMemberAndProvider(UUID userId) {
+        when(companyMemberRepository.existsByCompanyIdAndUserIdAndStatus(companyId, userId, "ACTIVE"))
+                .thenReturn(true);
+        when(chatMessageRepository.findLatestGeneralChatMessagesForAiContext(eq(companyId), any()))
+                .thenReturn(List.of());
+
+        AiProvider provider = mock(AiProvider.class);
+        when(aiProviderResolver.resolve()).thenReturn(provider);
+        return provider;
     }
 }
