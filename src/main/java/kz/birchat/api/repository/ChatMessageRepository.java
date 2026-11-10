@@ -134,17 +134,33 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
             @Param("lastReadCreatedAt") LocalDateTime lastReadCreatedAt,
             @Param("lastReadMessageId") UUID lastReadMessageId
     );
+    /**
+     * Поиск по сообщениям доступных пользователю чатов: общий чат и группы, где он участник.
+     * Директор ищет по всем чатам компании. Подстрока ищется буквально (% и _ не спецсимволы).
+     */
     @Query("""
     SELECT m FROM ChatMessageEntity m
     JOIN FETCH m.user u
+    JOIN FETCH m.chat ch
     WHERE m.company.id = :companyId
       AND m.isDeleted = false
       AND m.content IS NOT NULL
-      AND LOWER(m.content) LIKE LOWER(CONCAT('%', :query, '%'))
+      AND LOCATE(LOWER(:query), LOWER(m.content)) > 0
+      AND (
+            ch.type = 'GENERAL'
+            OR :director = true
+            OR EXISTS (
+                SELECT cm.id FROM ChatMemberEntity cm
+                WHERE cm.chat.id = ch.id
+                  AND cm.user.id = :userId
+            )
+      )
     ORDER BY m.createdAt DESC, m.id DESC
     """)
-    List<ChatMessageEntity> searchMessages(
+    List<ChatMessageEntity> searchAccessibleMessages(
             @Param("companyId") UUID companyId,
+            @Param("userId") UUID userId,
+            @Param("director") boolean director,
             @Param("query") String query,
             Pageable pageable
     );

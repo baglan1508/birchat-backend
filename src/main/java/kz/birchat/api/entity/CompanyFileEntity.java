@@ -25,6 +25,13 @@ public class CompanyFileEntity {
     @JoinColumn(name = "uploaded_by", nullable = false)
     private UserEntity uploadedBy;
 
+    /**
+     * Групповой чат, которому принадлежит файл. NULL — файл виден всем сотрудникам компании.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "chat_id")
+    private ChatEntity chat;
+
     @Column(name = "file_name", nullable = false)
     private String fileName;
 

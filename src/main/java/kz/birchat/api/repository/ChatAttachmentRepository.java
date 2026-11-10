@@ -11,6 +11,8 @@ import java.util.UUID;
 
 public interface ChatAttachmentRepository extends JpaRepository<ChatAttachmentEntity, UUID> {
 
+    boolean existsByFileId(UUID fileId);
+
     @Query("""
             SELECT a FROM ChatAttachmentEntity a
             JOIN FETCH a.file f

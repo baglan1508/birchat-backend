@@ -10,6 +10,7 @@ public record SearchResultResponse(
         String text,
         OffsetDateTime createdAt,
         UUID messageId,
-        UUID fileId
+        UUID fileId,
+        UUID chatId
 ) {
 }

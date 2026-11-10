@@ -3,6 +3,7 @@ package kz.birchat.api.service;
 import kz.birchat.api.dto.SearchResultResponse;
 import kz.birchat.api.entity.ChatMessageEntity;
 import kz.birchat.api.entity.CompanyFileEntity;
+import kz.birchat.api.entity.CompanyMemberEntity;
 import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
 import kz.birchat.api.repository.ChatMessageRepository;
@@ -27,6 +28,7 @@ public class SearchService {
     private static final String STATUS_ACTIVE = "ACTIVE";
     private static final int DEFAULT_LIMIT = 20;
     private static final int MAX_LIMIT = 50;
+    private static final int MAX_QUERY_LENGTH = 200;
 
     private final ChatMessageRepository chatMessageRepository;
     private final CompanyFileRepository companyFileRepository;
@@ -42,18 +44,20 @@ public class SearchService {
         String normalizedQuery = normalizeQuery(query);
         int safeLimit = normalizeLimit(limit);
 
-        checkActiveMember(companyId, userId);
+        CompanyMemberEntity member = requireActiveMember(companyId, userId);
+        boolean director = member.getRole() != null
+                && "DIRECTOR".equals(member.getRole().getCode());
 
         PageRequest pageRequest = PageRequest.of(0, safeLimit);
 
         List<SearchResultResponse> messageResults = chatMessageRepository
-                .searchMessages(companyId, normalizedQuery, pageRequest)
+                .searchAccessibleMessages(companyId, userId, director, normalizedQuery, pageRequest)
                 .stream()
                 .map(this::toMessageResult)
                 .toList();
 
         List<SearchResultResponse> fileResults = companyFileRepository
-                .searchFiles(companyId, normalizedQuery, pageRequest)
+                .searchAccessibleFiles(companyId, userId, director, normalizedQuery, pageRequest)
                 .stream()
                 .map(this::toFileResult)
                 .toList();
@@ -64,19 +68,13 @@ public class SearchService {
                 .toList();
     }
 
-    private void checkActiveMember(UUID companyId, UUID userId) {
-        boolean activeMember = companyMemberRepository.existsByCompanyIdAndUserIdAndStatus(
-                companyId,
-                userId,
-                STATUS_ACTIVE
-        );
-
-        if (!activeMember) {
-            throw ApiException.forbidden(
-                    ApiErrorCode.NOT_A_MEMBER,
-                    "Пользователь не состоит в компании"
-            );
-        }
+    private CompanyMemberEntity requireActiveMember(UUID companyId, UUID userId) {
+        return companyMemberRepository
+                .findByCompanyIdAndUserIdAndStatus(companyId, userId, STATUS_ACTIVE)
+                .orElseThrow(() -> ApiException.forbidden(
+                        ApiErrorCode.NOT_A_MEMBER,
+                        "Пользователь не состоит в компании"
+                ));
     }
 
     private String normalizeQuery(String query) {
@@ -93,6 +91,13 @@ public class SearchService {
             throw ApiException.badRequest(
                     ApiErrorCode.VALIDATION,
                     "query должен содержать минимум 2 символа"
+            );
+        }
+
+        if (value.length() > MAX_QUERY_LENGTH) {
+            throw ApiException.badRequest(
+                    ApiErrorCode.VALIDATION,
+                    "query не должен превышать " + MAX_QUERY_LENGTH + " символов"
             );
         }
 
@@ -128,7 +133,8 @@ public class SearchService {
                 message.getContent(),
                 TimeUtils.toUtcOffset(message.getCreatedAt()),
                 message.getId(),
-                null
+                null,
+                message.getChat().getId()
         );
     }
 
@@ -140,7 +146,8 @@ public class SearchService {
                 buildFileDescription(file),
                 TimeUtils.toUtcOffset(file.getCreatedAt()),
                 null,
-                file.getId()
+                file.getId(),
+                file.getChat() == null ? null : file.getChat().getId()
         );
     }
 
