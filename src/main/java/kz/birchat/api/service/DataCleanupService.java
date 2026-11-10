@@ -1,16 +1,20 @@
 package kz.birchat.api.service;
 
 import kz.birchat.api.config.DataCleanupProperties;
+import kz.birchat.api.entity.CompanyFileEntity;
+import kz.birchat.api.repository.CompanyFileRepository;
 import kz.birchat.api.repository.DataCleanupRepository;
 import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.IntUnaryOperator;
 
@@ -29,6 +33,8 @@ public class DataCleanupService {
     static final Duration DEFAULT_QUOTA_DAY_RETENTION = Duration.ofDays(30);
     static final Duration DEFAULT_REFRESH_TOKEN_RETENTION = Duration.ofDays(7);
     static final Duration DEFAULT_AUTH_CODE_RETENTION = Duration.ofDays(7);
+    static final Duration DEFAULT_PENDING_FILE_RETENTION = Duration.ofDays(1);
+    static final int PENDING_FILES_BATCH_SIZE = 100;
     static final int DEFAULT_BATCH_SIZE = 1000;
 
     /** Не больше 1000 порций за запуск на таблицу, чтобы задача гарантированно завершилась. */
@@ -36,6 +42,8 @@ public class DataCleanupService {
 
     private final DataCleanupRepository repository;
     private final DataCleanupProperties properties;
+    private final CompanyFileRepository companyFileRepository;
+    private final SupabaseStorageService storageService;
 
     public boolean isEnabled() {
         return properties == null || properties.enabled() == null || properties.enabled();
@@ -67,6 +75,9 @@ public class DataCleanupService {
         report.put("authCodes", run("authCodes", limit ->
                 repository.deleteAuthCodesBefore(now.minus(authCodeRetention()), limit), batch));
 
+        report.put("pendingFiles", run("pendingFiles", limit ->
+                deleteStalePendingFiles(now.minus(pendingFileRetention()), limit), PENDING_FILES_BATCH_SIZE));
+
         log.info("Data cleanup finished: {}", report);
 
         return report;
@@ -95,6 +106,27 @@ public class DataCleanupService {
             log.error("Data cleanup {} failed after deleting {} rows", name, total, ex);
             return -1;
         }
+    }
+
+    /**
+     * Недозагруженные файлы (ссылка выдана, загрузка не подтверждена): удаляем объект
+     * из хранилища и запись. Если хранилище недоступно — запись остаётся до следующей ночи.
+     */
+    private int deleteStalePendingFiles(LocalDateTime cutoff, int limit) {
+        List<CompanyFileEntity> files = companyFileRepository.findStalePending(cutoff, PageRequest.of(0, limit));
+
+        if (files.isEmpty()) {
+            return 0;
+        }
+
+        storageService.deleteObjects(files.stream().map(CompanyFileEntity::getStorageKey).toList());
+        companyFileRepository.deleteAllInBatch(files);
+
+        return files.size();
+    }
+
+    private Duration pendingFileRetention() {
+        return orDefault(properties == null ? null : properties.pendingFileRetention(), DEFAULT_PENDING_FILE_RETENTION);
     }
 
     private Duration quotaMinuteRetention() {

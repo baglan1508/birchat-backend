@@ -1,6 +1,8 @@
 package kz.birchat.api.service;
 
 import kz.birchat.api.config.DataCleanupProperties;
+import kz.birchat.api.entity.CompanyFileEntity;
+import kz.birchat.api.repository.CompanyFileRepository;
 import kz.birchat.api.repository.DataCleanupRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -12,6 +14,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -25,10 +28,18 @@ class DataCleanupServiceTest {
     @Mock
     private DataCleanupRepository repository;
 
+    @Mock
+    private CompanyFileRepository companyFileRepository;
+
+    @Mock
+    private SupabaseStorageService storageService;
+
     private DataCleanupService service(Integer batchSize) {
         return new DataCleanupService(
                 repository,
-                new DataCleanupProperties(true, null, null, null, null, batchSize)
+                new DataCleanupProperties(true, null, null, null, null, null, batchSize),
+                companyFileRepository,
+                storageService
         );
     }
 
@@ -83,7 +94,9 @@ class DataCleanupServiceTest {
     void canBeDisabled() {
         DataCleanupService disabled = new DataCleanupService(
                 repository,
-                new DataCleanupProperties(false, null, null, null, null, null)
+                new DataCleanupProperties(false, null, null, null, null, null, null),
+                companyFileRepository,
+                storageService
         );
 
         assertFalse(disabled.isEnabled());
@@ -93,5 +106,33 @@ class DataCleanupServiceTest {
     private static void assertAround(LocalDateTime expected, LocalDateTime actual) {
         assertTrue(Duration.between(expected, actual).abs().compareTo(Duration.ofMinutes(1)) < 0,
                 () -> "expected ~" + expected + " but was " + actual);
+    }
+
+    @Test
+    void stalePendingFilesAreRemovedFromStorageAndDatabase() {
+        CompanyFileEntity pending = new CompanyFileEntity();
+        pending.setStorageKey("companies/c1/2026-11-10/a.jpg");
+
+        when(companyFileRepository.findStalePending(any(), any())).thenReturn(List.of(pending));
+
+        Map<String, Integer> report = service(100).cleanup();
+
+        assertEquals(1, report.get("pendingFiles"));
+        verify(storageService).deleteObjects(List.of("companies/c1/2026-11-10/a.jpg"));
+        verify(companyFileRepository).deleteAllInBatch(List.of(pending));
+    }
+
+    @Test
+    void pendingFilesStayWhenStorageIsUnavailable() {
+        CompanyFileEntity pending = new CompanyFileEntity();
+        pending.setStorageKey("k");
+
+        when(companyFileRepository.findStalePending(any(), any())).thenReturn(List.of(pending));
+        doThrow(new RuntimeException("storage down")).when(storageService).deleteObjects(any());
+
+        Map<String, Integer> report = service(100).cleanup();
+
+        assertEquals(-1, report.get("pendingFiles"));
+        verify(companyFileRepository, never()).deleteAllInBatch(any());
     }
 }
