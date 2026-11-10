@@ -1,5 +1,7 @@
 package kz.birchat.api.auth;
 
+import io.sentry.Sentry;
+import io.sentry.protocol.User;
 import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
 import lombok.RequiredArgsConstructor;
@@ -41,7 +43,14 @@ public class CurrentUserArgumentResolver implements HandlerMethodArgumentResolve
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
 
         if (authentication != null && authentication.getPrincipal() instanceof Jwt jwt) {
-            return currentUserService.currentUserId(jwt);
+            UUID userId = currentUserService.currentUserId(jwt);
+
+            // В Sentry к ошибке прикрепляется только id пользователя, без телефона и имени.
+            User sentryUser = new User();
+            sentryUser.setId(userId.toString());
+            Sentry.setUser(sentryUser);
+
+            return userId;
         }
 
         throw new ApiException(
