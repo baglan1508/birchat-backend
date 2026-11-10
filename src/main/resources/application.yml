@@ -25,3 +25,16 @@ otp:
 cleanup:
   enabled: ${CLEANUP_ENABLED:true}
   cron: ${CLEANUP_CRON:0 10 4 * * *}
+
+# Мониторинг ошибок. Пустой SENTRY_DSN — Sentry выключен (локально и до настройки).
+# В Sentry уходят записи лога уровня ERROR: ошибки 5xx API и сбои фоновых задач.
+sentry:
+  dsn: ${SENTRY_DSN:}
+  environment: ${SENTRY_ENVIRONMENT:production}
+  release: ${RENDER_GIT_COMMIT:}
+  send-default-pii: false
+  max-request-body-size: none
+  traces-sample-rate: ${SENTRY_TRACES_SAMPLE_RATE:0.0}
+  logging:
+    minimum-event-level: error
+    minimum-breadcrumb-level: info

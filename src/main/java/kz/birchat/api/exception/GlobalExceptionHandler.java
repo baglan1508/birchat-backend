@@ -2,6 +2,7 @@ package kz.birchat.api.exception;
 
 import jakarta.servlet.http.HttpServletRequest;
 import kz.birchat.api.dto.ErrorResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -13,6 +14,11 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import kz.birchat.api.util.TimeUtils;
 import java.util.stream.Collectors;
 
+/**
+ * Ошибки 5xx пишутся в лог с уровнем ERROR — оттуда они уходят в Sentry (sentry-logback).
+ * Ошибки 4xx — ожидаемые (валидация, нет доступа), их не логируем как ошибки.
+ */
+@Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -21,6 +27,17 @@ public class GlobalExceptionHandler {
             ApiException ex,
             HttpServletRequest request
     ) {
+        if (ex.getStatus().is5xxServerError()) {
+            log.error(
+                    "API error {} {} on {} {}",
+                    ex.getStatus().value(),
+                    ex.getCode(),
+                    request.getMethod(),
+                    request.getRequestURI(),
+                    ex
+            );
+        }
+
         ErrorResponse response = new ErrorResponse(
                 TimeUtils.utcOffsetNow(),
                 ex.getStatus().value(),
@@ -122,6 +139,13 @@ public class GlobalExceptionHandler {
             Exception ex,
             HttpServletRequest request
     ) {
+        log.error(
+                "Unhandled error on {} {}",
+                request.getMethod(),
+                request.getRequestURI(),
+                ex
+        );
+
         ErrorResponse response = new ErrorResponse(
                 TimeUtils.utcOffsetNow(),
                 HttpStatus.INTERNAL_SERVER_ERROR.value(),
