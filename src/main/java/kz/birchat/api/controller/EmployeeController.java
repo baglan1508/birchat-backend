@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import kz.birchat.api.dto.CreateEmployeeRequest;
 import kz.birchat.api.dto.EmployeeResponse;
 import kz.birchat.api.service.EmployeeService;
+import kz.birchat.api.auth.CurrentUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
@@ -21,7 +22,7 @@ public class EmployeeController {
     @GetMapping
     public List<EmployeeResponse> getEmployees(
             @PathVariable UUID companyId,
-            @RequestParam UUID userId
+            @CurrentUser UUID userId
     ) {
         return employeeService.getEmployees(companyId, userId);
     }
@@ -30,7 +31,7 @@ public class EmployeeController {
     @ResponseStatus(HttpStatus.CREATED)
     public EmployeeResponse addEmployee(
             @PathVariable UUID companyId,
-            @RequestParam UUID actorUserId,
+            @CurrentUser UUID actorUserId,
             @Valid @RequestBody CreateEmployeeRequest request
     ) {
         return employeeService.addEmployee(companyId, actorUserId, request);

@@ -5,6 +5,7 @@ import kz.birchat.api.dto.CompanyHomeResponse;
 import kz.birchat.api.dto.CompanyResponse;
 import kz.birchat.api.dto.CreateCompanyRequest;
 import kz.birchat.api.service.CompanyService;
+import kz.birchat.api.auth.CurrentUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
@@ -21,7 +22,7 @@ public class CompanyController {
 
     @GetMapping("/my")
     public List<CompanyResponse> getMyCompanies(
-            @RequestParam UUID userId
+            @CurrentUser UUID userId
     ) {
         return companyService.getMyCompanies(userId);
     }
@@ -29,7 +30,7 @@ public class CompanyController {
     @GetMapping("/{companyId}/home")
     public CompanyHomeResponse getCompanyHome(
             @PathVariable UUID companyId,
-            @RequestParam UUID userId
+            @CurrentUser UUID userId
     ) {
         return companyService.getCompanyHome(companyId, userId);
     }
@@ -37,8 +38,9 @@ public class CompanyController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public CompanyResponse createCompany(
+            @CurrentUser UUID userId,
             @Valid @RequestBody CreateCompanyRequest request
     ) {
-        return companyService.createCompany(request);
+        return companyService.createCompany(userId, request);
     }
 }

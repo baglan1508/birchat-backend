@@ -6,6 +6,7 @@ import kz.birchat.api.dto.AiAskResponse;
 import kz.birchat.api.dto.AiDirectorSummaryResponse;
 import kz.birchat.api.dto.AiHistoryResponse;
 import kz.birchat.api.service.AiService;
+import kz.birchat.api.auth.CurrentUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,7 +22,7 @@ public class AiController {
     @PostMapping("/ask")
     public AiAskResponse ask(
             @PathVariable UUID companyId,
-            @RequestParam UUID userId,
+            @CurrentUser UUID userId,
             @Valid @RequestBody AiAskRequest request
     ) {
         return aiService.ask(
@@ -34,7 +35,7 @@ public class AiController {
     @GetMapping("/director/summary/today")
     public AiDirectorSummaryResponse getTodayDirectorSummary(
             @PathVariable UUID companyId,
-            @RequestParam UUID userId
+            @CurrentUser UUID userId
     ) {
         return aiService.getTodayDirectorSummary(
                 companyId,
@@ -45,7 +46,7 @@ public class AiController {
     @GetMapping("/history")
     public AiHistoryResponse getHistory(
             @PathVariable UUID companyId,
-            @RequestParam UUID userId,
+            @CurrentUser UUID userId,
             @RequestParam(defaultValue = "50") Integer limit
     ) {
         return aiService.getHistory(

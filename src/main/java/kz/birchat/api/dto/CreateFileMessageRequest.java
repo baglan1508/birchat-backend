@@ -7,9 +7,6 @@ import java.util.UUID;
 
 public record CreateFileMessageRequest(
 
-        @NotNull(message = "userId обязателен")
-        UUID userId,
-
         @NotNull(message = "fileId обязателен")
         UUID fileId,
 

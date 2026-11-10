@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import kz.birchat.api.dto.UpdateUserRequest;
 import kz.birchat.api.dto.UserResponse;
 import kz.birchat.api.service.UserService;
+import kz.birchat.api.auth.CurrentUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.HttpStatus;
@@ -20,13 +21,13 @@ public class UserController {
     private final UserService userService;
 
     @GetMapping("/me")
-    public UserResponse getMe(@RequestParam UUID userId) {
+    public UserResponse getMe(@CurrentUser UUID userId) {
         return userService.getMe(userId);
     }
 
     @PutMapping("/me")
     public UserResponse updateMe(
-            @RequestParam UUID userId,
+            @CurrentUser UUID userId,
             @Valid @RequestBody UpdateUserRequest request
     ) {
         return userService.updateMe(userId, request);
@@ -34,7 +35,7 @@ public class UserController {
 
     @DeleteMapping("/me")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void deleteMe(@RequestParam UUID userId) {
+    public void deleteMe(@CurrentUser UUID userId) {
         userService.deleteMe(userId);
     }
 }

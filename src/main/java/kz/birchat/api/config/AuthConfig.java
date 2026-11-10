@@ -6,7 +6,8 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 @EnableConfigurationProperties({
         AuthSmsProperties.class,
-        SmscProperties.class
+        SmscProperties.class,
+        JwtProperties.class
 })
 public class AuthConfig {
 }

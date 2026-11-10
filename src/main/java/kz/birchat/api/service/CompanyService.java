@@ -130,10 +130,10 @@ public class CompanyService {
     }
 
     @Transactional
-    public CompanyResponse createCompany(CreateCompanyRequest request) {
-        UserEntity owner = userRepository.findById(request.ownerUserId())
+    public CompanyResponse createCompany(UUID ownerUserId, CreateCompanyRequest request) {
+        UserEntity owner = userRepository.findById(ownerUserId)
                 .orElseThrow(() -> new IllegalArgumentException(
-                        "Пользователь не найден: " + request.ownerUserId()
+                        "Пользователь не найден: " + ownerUserId
                 ));
 
         RoleEntity directorRole = roleRepository.findByCode("DIRECTOR")
