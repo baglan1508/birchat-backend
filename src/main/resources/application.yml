@@ -18,3 +18,10 @@ springdoc:
 
 otp:
   provider: ${OTP_PROVIDER:console}
+
+# Ночная чистка служебных данных (окна AI-квот, старые refresh-токены и коды входа).
+# Сроки хранения можно переопределить: cleanup.quota-minute-retention, quota-day-retention,
+# refresh-token-retention, auth-code-retention (например 7d, 30d).
+cleanup:
+  enabled: ${CLEANUP_ENABLED:true}
+  cron: ${CLEANUP_CRON:0 10 4 * * *}
