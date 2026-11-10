@@ -5,6 +5,7 @@ import kz.birchat.api.dto.ErrorResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -17,6 +18,7 @@ import java.util.stream.Collectors;
 /**
  * Ошибки 5xx пишутся в лог с уровнем ERROR — оттуда они уходят в Sentry (sentry-logback).
  * Ошибки 4xx — ожидаемые (валидация, нет доступа), их не логируем как ошибки.
+ * Неверный метод, несуществующий адрес и битый JSON — тоже ошибки клиента (405/404/400), а не 500.
  */
 @Slf4j
 @RestControllerAdvice
@@ -134,11 +136,46 @@ public class GlobalExceptionHandler {
                 .body(response);
     }
 
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleNotReadableException(
+            HttpMessageNotReadableException ex,
+            HttpServletRequest request
+    ) {
+        return clientError(
+                HttpStatus.BAD_REQUEST,
+                ApiErrorCode.BAD_REQUEST,
+                "Некорректное тело запроса",
+                request
+        );
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleException(
             Exception ex,
             HttpServletRequest request
     ) {
+        // Ошибки Spring MVC со своим статусом 4xx: неверный метод (405), нет такого адреса (404),
+        // неподдерживаемый Content-Type (415) и т.п. Это ошибка запроса, а не сервера.
+        if (ex instanceof org.springframework.web.ErrorResponse springError
+                && springError.getStatusCode().is4xxClientError()) {
+            HttpStatus status = HttpStatus.resolve(springError.getStatusCode().value());
+
+            if (status == null) {
+                status = HttpStatus.BAD_REQUEST;
+            }
+
+            return switch (status) {
+                case NOT_FOUND -> clientError(status, ApiErrorCode.NOT_FOUND, "Ресурс не найден", request);
+                case METHOD_NOT_ALLOWED -> clientError(
+                        status,
+                        ApiErrorCode.METHOD_NOT_ALLOWED,
+                        "Метод " + request.getMethod() + " не поддерживается",
+                        request
+                );
+                default -> clientError(status, ApiErrorCode.BAD_REQUEST, status.getReasonPhrase(), request);
+            };
+        }
+
         log.error(
                 "Unhandled error on {} {}",
                 request.getMethod(),
@@ -157,6 +194,26 @@ public class GlobalExceptionHandler {
 
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(response);
+    }
+
+    private ResponseEntity<ErrorResponse> clientError(
+            HttpStatus status,
+            ApiErrorCode code,
+            String message,
+            HttpServletRequest request
+    ) {
+        ErrorResponse response = new ErrorResponse(
+                TimeUtils.utcOffsetNow(),
+                status.value(),
+                status.name(),
+                code.name(),
+                message,
+                request.getRequestURI()
+        );
+
+        return ResponseEntity
+                .status(status)
                 .body(response);
     }
 }

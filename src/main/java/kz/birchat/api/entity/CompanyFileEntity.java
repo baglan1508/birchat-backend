@@ -50,6 +50,10 @@ public class CompanyFileEntity {
     @Column(name = "file_url", nullable = false)
     private String fileUrl;
 
+    /** PENDING — ссылка на загрузку выдана, файл ещё не подтверждён; READY — файл доступен. */
+    @Column(name = "status", nullable = false)
+    private String status;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

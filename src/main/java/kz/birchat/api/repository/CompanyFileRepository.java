@@ -19,6 +19,7 @@ public interface CompanyFileRepository extends JpaRepository<CompanyFileEntity, 
         SELECT f FROM CompanyFileEntity f
         JOIN FETCH f.uploadedBy u
         WHERE f.company.id = :companyId
+          AND f.status = 'READY'
           AND (
                 f.chat IS NULL
                 OR :director = true
@@ -44,6 +45,7 @@ public interface CompanyFileRepository extends JpaRepository<CompanyFileEntity, 
         SELECT f FROM CompanyFileEntity f
         JOIN FETCH f.uploadedBy u
         WHERE f.company.id = :companyId
+          AND f.status = 'READY'
           AND LOCATE(LOWER(:query), LOWER(f.originalFileName)) > 0
           AND (
                 f.chat IS NULL
@@ -61,6 +63,18 @@ public interface CompanyFileRepository extends JpaRepository<CompanyFileEntity, 
             @Param("userId") UUID userId,
             @Param("director") boolean director,
             @Param("query") String query,
+            Pageable pageable
+    );
+
+    /** Недозагруженные файлы старше cutoff — для ночной чистки. */
+    @Query("""
+        SELECT f FROM CompanyFileEntity f
+        WHERE f.status = 'PENDING'
+          AND f.createdAt < :cutoff
+        ORDER BY f.createdAt ASC
+        """)
+    List<CompanyFileEntity> findStalePending(
+            @Param("cutoff") java.time.LocalDateTime cutoff,
             Pageable pageable
     );
 }

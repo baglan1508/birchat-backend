@@ -177,6 +177,7 @@ public class ChatService {
 
         CompanyFileEntity file = companyFileRepository.findById(request.fileId())
                 .filter(item -> companyId.equals(item.getCompany().getId()))
+                .filter(item -> CompanyFileService.STATUS_READY.equals(item.getStatus()))
                 .orElseThrow(() -> ApiException.notFound(
                         ApiErrorCode.FILE_NOT_FOUND,
                         "Файл не найден"
