@@ -24,6 +24,13 @@
         <springdoc.version>2.8.6</springdoc.version>
         <shedlock.version>7.10.1</shedlock.version>
         <sentry.version>8.63.0</sentry.version>
+        <!--
+            Spring Boot 3.5 приносит Flyway 11.7, который официально поддерживает PostgreSQL до 17.
+            База в Neon — PostgreSQL 18; поддержка 18 появилась в Flyway 11.13.3.
+            11.20.3 — последняя версия ветки 11.x (в 11.12–11.20 нет несовместимых изменений).
+            Свойство переопределяет версию и flyway-core, и flyway-database-postgresql.
+        -->
+        <flyway.version>11.20.3</flyway.version>
     </properties>
 
     <dependencies>
