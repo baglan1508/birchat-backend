@@ -74,4 +74,8 @@ Rollback на предыдущий деплой в Render. Индексы из `
 * PR #6, коммит `106e0c8`, Render — **Live** 10.11.2026 в 20:27.
 * Миграция: `Successfully applied 1 migration ... now at version v14`.
 * Приложение стартовало без ошибок.
-* Первый запуск чистки — 11.11.2026 в 04:10 по Алматы, проверка по логам после него.
+* Первый запуск чистки — 11.11.2026 в 04:10 по Алматы (23:10 UTC), **один раз** на каждом окружении, без ошибок:
+  * прод: `{aiQuotaMinuteWindows=0, aiQuotaDayWindows=0, expiredRefreshTokens=0, revokedRefreshTokens=0, authCodes=28, pendingFiles=0}`;
+  * тест: `{aiQuotaMinuteWindows=2, aiQuotaDayWindows=0, expiredRefreshTokens=0, revokedRefreshTokens=0, authCodes=0, pendingFiles=0}`.
+* Значений `-1` (ошибка в таблице) нет. Sentry за сутки — без новых ошибок.
+* Недозагруженные файлы, оставленные на тесте 10.11 (выпуск 06), в первую ночь не удалены — им было ~5 часов при сроке хранения 1 день. Удалятся в ночь на 12.11.

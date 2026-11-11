@@ -18,7 +18,11 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Service
@@ -50,8 +54,13 @@ public class SearchService {
 
         PageRequest pageRequest = PageRequest.of(0, safeLimit);
 
-        List<SearchResultResponse> messageResults = chatMessageRepository
-                .searchAccessibleMessages(companyId, userId, director, normalizedQuery, pageRequest)
+        List<SearchResultResponse> messageResults = searchMessages(
+                companyId,
+                userId,
+                director,
+                normalizedQuery,
+                safeLimit
+        )
                 .stream()
                 .map(this::toMessageResult)
                 .toList();
@@ -66,6 +75,47 @@ public class SearchService {
                 .sorted(Comparator.comparing(SearchResultResponse::createdAt).reversed())
                 .limit(safeLimit)
                 .toList();
+    }
+
+    /**
+     * Сообщения ищутся полнотекстовым индексом с русской морфологией.
+     * Запрос без букв и цифр (например, «!!») в индекс не отправляется — по нему нечего искать.
+     */
+    private List<ChatMessageEntity> searchMessages(
+            UUID companyId,
+            UUID userId,
+            boolean director,
+            String query,
+            int limit
+    ) {
+        if (!hasLettersOrDigits(query)) {
+            return List.of();
+        }
+
+        List<UUID> ids = chatMessageRepository
+                .searchAccessibleMessageIds(companyId, userId, director, query, limit)
+                .stream()
+                .map(UUID::fromString)
+                .toList();
+
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+
+        Map<UUID, ChatMessageEntity> byId = chatMessageRepository
+                .findAllWithUserAndChatByIdIn(ids)
+                .stream()
+                .collect(Collectors.toMap(ChatMessageEntity::getId, Function.identity()));
+
+        // Порядок — как вернул индекс (новые сверху).
+        return ids.stream()
+                .map(byId::get)
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    static boolean hasLettersOrDigits(String query) {
+        return query.codePoints().anyMatch(Character::isLetterOrDigit);
     }
 
     private CompanyMemberEntity requireActiveMember(UUID companyId, UUID userId) {
