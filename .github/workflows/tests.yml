@@ -1,6 +1,7 @@
 # Юнит-тесты на каждый PR и push в develop/main.
 # Сборка на Render идёт с -DskipTests (быстрый деплой), поэтому тесты гоняются здесь.
-# Тесты не ходят в базу и внешние сервисы, секреты не нужны.
+# Секреты не нужны. Тест миграций запускается на чистом PostgreSQL 18 (как в Neon)
+# из контейнера ниже; без переменной MIGRATION_TEST_DB_URL (локально) он пропускается.
 name: Tests
 
 on:
@@ -20,6 +21,22 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: birchat_ci
+          POSTGRES_USER: birchat
+          POSTGRES_PASSWORD: birchat
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U birchat -d birchat_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
     steps:
       - uses: actions/checkout@v4
 
@@ -31,3 +48,7 @@ jobs:
 
       - name: Run tests
         run: mvn -B -ntp test
+        env:
+          MIGRATION_TEST_DB_URL: jdbc:postgresql://localhost:5432/birchat_ci
+          MIGRATION_TEST_DB_USER: birchat
+          MIGRATION_TEST_DB_PASSWORD: birchat
