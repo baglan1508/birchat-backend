@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -135,35 +136,58 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
             @Param("lastReadMessageId") UUID lastReadMessageId
     );
     /**
-     * Поиск по сообщениям доступных пользователю чатов: общий чат и группы, где он участник.
-     * Директор ищет по всем чатам компании. Подстрока ищется буквально (% и _ не спецсимволы).
+     * Полнотекстовый поиск по сообщениям доступных пользователю чатов (индекс из V16):
+     * общий чат и группы, где он участник; директор ищет по всем чатам компании.
+     *
+     * Запрос нормализуется той же функцией birchat.search_text, что и текст сообщений,
+     * и разбирается с русской морфологией («договоры» находит «договора», «договором»).
+     * Все слова должны встретиться в сообщении; последнее слово ищется как начало слова —
+     * пользователь мог его не допечатать. Спецсимволы tsquery в запросе безопасны:
+     * plainto_tsquery воспринимает запрос как обычный текст.
+     *
+     * Возвращает id (новые сверху), сами сообщения — {@link #findAllWithUserAndChatByIdIn}.
      */
-    @Query("""
-    SELECT m FROM ChatMessageEntity m
-    JOIN FETCH m.user u
-    JOIN FETCH m.chat ch
-    WHERE m.company.id = :companyId
-      AND m.isDeleted = false
-      AND m.content IS NOT NULL
-      AND LOCATE(LOWER(:query), LOWER(m.content)) > 0
-      AND (
-            ch.type = 'GENERAL'
-            OR :director = true
-            OR EXISTS (
-                SELECT cm.id FROM ChatMemberEntity cm
-                WHERE cm.chat.id = ch.id
-                  AND cm.user.id = :userId
-            )
-      )
-    ORDER BY m.createdAt DESC, m.id DESC
-    """)
-    List<ChatMessageEntity> searchAccessibleMessages(
+    @Query(value = """
+        SELECT CAST(m.id AS text)
+        FROM birchat.chat_messages m
+        JOIN birchat.chats ch ON ch.id = m.chat_id
+        WHERE m.company_id = :companyId
+          AND m.is_deleted = false
+          AND m.content IS NOT NULL
+          AND m.search_vector @@ CAST(
+                regexp_replace(
+                    CAST(plainto_tsquery('russian', birchat.search_text(:query)) AS text),
+                    '''$',
+                    ''':*'
+                ) AS tsquery
+          )
+          AND (
+                ch.type = 'GENERAL'
+                OR :director = true
+                OR EXISTS (
+                    SELECT 1 FROM birchat.chat_members cm
+                    WHERE cm.chat_id = ch.id
+                      AND cm.user_id = :userId
+                )
+          )
+        ORDER BY m.created_at DESC, m.id DESC
+        LIMIT :limit
+        """, nativeQuery = true)
+    List<String> searchAccessibleMessageIds(
             @Param("companyId") UUID companyId,
             @Param("userId") UUID userId,
             @Param("director") boolean director,
             @Param("query") String query,
-            Pageable pageable
+            @Param("limit") int limit
     );
+
+    @Query("""
+        SELECT m FROM ChatMessageEntity m
+        JOIN FETCH m.user u
+        JOIN FETCH m.chat ch
+        WHERE m.id IN :ids
+        """)
+    List<ChatMessageEntity> findAllWithUserAndChatByIdIn(@Param("ids") Collection<UUID> ids);
     @Query("""
         SELECT m FROM ChatMessageEntity m
         JOIN FETCH m.user u
