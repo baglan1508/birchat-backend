@@ -6,6 +6,8 @@ import kz.birchat.api.ai.AiProviderResolver;
 import kz.birchat.api.ai.AiProviderResponse;
 import kz.birchat.api.dto.AiAskResponse;
 import kz.birchat.api.entity.AiMessageEntity;
+import kz.birchat.api.entity.ChatMessageEntity;
+import kz.birchat.api.enums.ChatMessageType;
 import kz.birchat.api.entity.AiThreadEntity;
 import org.mockito.InOrder;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -241,5 +243,33 @@ class AiServiceTest {
         AiProvider provider = mock(AiProvider.class);
         when(aiProviderResolver.resolve()).thenReturn(provider);
         return provider;
+    }
+
+    @Test
+    void photoWithoutCaptionIsVisibleToAi() {
+        ChatMessageEntity photo = new ChatMessageEntity();
+        photo.setType(ChatMessageType.IMAGE);
+        photo.setContent("");
+
+        assertTrue(AiService.hasAiContent(photo));
+        assertEquals("[фото]", AiService.aiContent(photo));
+    }
+
+    @Test
+    void attachmentCaptionFollowsLabel() {
+        ChatMessageEntity document = new ChatMessageEntity();
+        document.setType(ChatMessageType.DOCUMENT);
+        document.setContent(" Накладная ");
+
+        assertEquals("[документ] Накладная", AiService.aiContent(document));
+    }
+
+    @Test
+    void emptyTextMessageIsSkipped() {
+        ChatMessageEntity empty = new ChatMessageEntity();
+        empty.setType(ChatMessageType.TEXT);
+        empty.setContent("  ");
+
+        assertFalse(AiService.hasAiContent(empty));
     }
 }

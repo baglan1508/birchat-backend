@@ -20,6 +20,7 @@ import kz.birchat.api.entity.ChatMessageEntity;
 import kz.birchat.api.entity.CompanyEntity;
 import kz.birchat.api.entity.UserEntity;
 import kz.birchat.api.enums.AiMessageRole;
+import kz.birchat.api.enums.ChatMessageType;
 import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
 import kz.birchat.api.repository.AiCompanySummaryRepository;
@@ -371,7 +372,7 @@ public class AiService {
                         PageRequest.of(0, summaryMaxMessages())
                 )
                 .stream()
-                .filter(message -> message.getContent() != null && !message.getContent().isBlank())
+                .filter(AiService::hasAiContent)
                 .sorted(Comparator.comparing(ChatMessageEntity::getCreatedAt)
                         .thenComparing(ChatMessageEntity::getId))
                 .map(message -> toProviderMessage(
@@ -388,7 +389,7 @@ public class AiService {
                         PageRequest.of(0, AI_CHAT_CONTEXT_LIMIT)
                 )
                 .stream()
-                .filter(message -> message.getContent() != null && !message.getContent().isBlank())
+                .filter(AiService::hasAiContent)
                 .sorted(Comparator.comparing(ChatMessageEntity::getCreatedAt)
                         .thenComparing(ChatMessageEntity::getId))
                 .map(message -> toProviderMessage(
@@ -398,6 +399,41 @@ public class AiService {
                 .toList();
     }
 
+    /**
+     * Сообщение попадает в контекст AI, если в нём есть текст или вложение.
+     * Фото, голосовое или документ без подписи раньше пропускались — AI не знал, что их отправили.
+     */
+    static boolean hasAiContent(ChatMessageEntity message) {
+        boolean hasText = message.getContent() != null && !message.getContent().isBlank();
+
+        return hasText || attachmentLabel(message.getType()) != null;
+    }
+
+    /** Текст сообщения для AI: метка вложения («[фото]») и подпись, если есть. */
+    static String aiContent(ChatMessageEntity message) {
+        String text = message.getContent() == null ? "" : message.getContent().trim();
+        String label = attachmentLabel(message.getType());
+
+        if (label == null) {
+            return text;
+        }
+
+        return text.isEmpty() ? label : label + " " + text;
+    }
+
+    private static String attachmentLabel(ChatMessageType type) {
+        if (type == null) {
+            return null;
+        }
+
+        return switch (type) {
+            case IMAGE -> "[фото]";
+            case VOICE -> "[голосовое сообщение]";
+            case DOCUMENT -> "[документ]";
+            default -> null;
+        };
+    }
+
     private AiProviderMessage toProviderMessage(
             ChatMessageEntity message,
             int maxLength
@@ -405,7 +441,7 @@ public class AiService {
         return new AiProviderMessage(
                 "GENERAL_CHAT",
                 buildAuthor(message),
-                truncateForAiContext(message.getContent(), maxLength),
+                truncateForAiContext(aiContent(message), maxLength),
                 message.getCreatedAt() == null
                         ? null
                         : TimeUtils.toUtcOffset(message.getCreatedAt()).toString()
