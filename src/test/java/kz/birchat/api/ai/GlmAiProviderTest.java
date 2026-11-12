@@ -71,4 +71,17 @@ class GlmAiProviderTest {
         assertTrue(disabled.contains("\"max_tokens\":1024"), disabled);
         assertFalse(omitted.contains("thinking"), omitted);
     }
+
+    @Test
+    void visionRequestSendsImageLinkAndInstruction() throws Exception {
+        kz.birchat.api.config.AiProperties.Glm glm = new kz.birchat.api.config.AiProperties.Glm();
+
+        String json = new ObjectMapper().writeValueAsString(
+                GlmAiProvider.buildVisionRequest(glm, "https://storage.example/signed/photo.jpg"));
+
+        assertTrue(json.contains("\"model\":\"glm-4.6v\""), json);
+        assertTrue(json.contains("{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://storage.example/signed/photo.jpg\"}}"), json);
+        assertTrue(json.contains("\"type\":\"text\""), json);
+        assertTrue(json.contains("\"thinking\":{\"type\":\"disabled\"}"), json);
+    }
 }

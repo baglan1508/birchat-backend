@@ -7,6 +7,8 @@ import kz.birchat.api.ai.AiProviderResponse;
 import kz.birchat.api.dto.AiAskResponse;
 import kz.birchat.api.entity.AiMessageEntity;
 import kz.birchat.api.entity.ChatMessageEntity;
+import kz.birchat.api.repository.ChatAttachmentRepository;
+import kz.birchat.api.repository.CompanyFileRepository;
 import kz.birchat.api.enums.ChatMessageType;
 import kz.birchat.api.entity.AiThreadEntity;
 import org.mockito.InOrder;
@@ -67,6 +69,12 @@ class AiServiceTest {
 
     @Mock
     private PlatformTransactionManager transactionManager;
+
+    @Mock
+    private ChatAttachmentRepository chatAttachmentRepository;
+
+    @Mock
+    private CompanyFileRepository companyFileRepository;
 
     @InjectMocks
     private AiService aiService;
@@ -271,5 +279,15 @@ class AiServiceTest {
         empty.setContent("  ");
 
         assertFalse(AiService.hasAiContent(empty));
+    }
+
+    @Test
+    void photoDescriptionGoesIntoLabel() {
+        ChatMessageEntity photo = new ChatMessageEntity();
+        photo.setType(ChatMessageType.IMAGE);
+        photo.setContent("Вот накладная");
+
+        assertEquals("[фото: Накладная №15 от ТОО «Арман», 150 000 тг] Вот накладная",
+                AiService.aiContent(photo, "Накладная №15 от ТОО «Арман», 150 000 тг"));
     }
 }

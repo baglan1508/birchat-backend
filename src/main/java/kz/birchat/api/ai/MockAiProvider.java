@@ -26,10 +26,13 @@ public class MockAiProvider implements AiProvider {
                 Контекст последних сообщений общего чата получен.
 
                 Количество сообщений в контексте: %s
+                Последние сообщения:
+                %s
 
                 Ваш вопрос: %s
                 """.formatted(
                 contextMessagesCount,
+                lastMessages(request.contextMessages()),
                 request.question()
         );
 
@@ -53,6 +56,26 @@ public class MockAiProvider implements AiProvider {
                         "Период: " + request.periodStart() + " — " + request.periodEnd(),
                         "Реальная сводка будет сформирована при AI_PROVIDER=glm"
                 ),
+                MODEL
+        );
+    }
+
+    /** Последние сообщения контекста — чтобы на тесте было видно, что именно получил AI. */
+    private static String lastMessages(List<AiProviderMessage> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return "—";
+        }
+
+        return messages.stream()
+                .skip(Math.max(0, messages.size() - 5))
+                .map(message -> "- " + message.author() + ": " + message.content())
+                .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
+    @Override
+    public AiMediaResult describeImage(String imageUrl) {
+        return new AiMediaResult(
+                "AI mock: тестовое описание фото (настоящее будет при AI_PROVIDER=glm)",
                 MODEL
         );
     }
