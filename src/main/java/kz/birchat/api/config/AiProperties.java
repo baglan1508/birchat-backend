@@ -23,6 +23,8 @@ public class AiProperties {
         private String baseUrl = "https://api.z.ai/api/paas/v4";
         private Integer maxTokens = 1024;
         private Double temperature = 0.6;
+        /** disabled — без рассуждений (быстрее, не тратит max_tokens); enabled; пусто — по умолчанию модели. */
+        private String thinking = "disabled";
     }
     @Getter
     @Setter

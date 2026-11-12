@@ -1,5 +1,6 @@
 package kz.birchat.api.ai;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import kz.birchat.api.config.AiProperties;
 import kz.birchat.api.exception.ApiErrorCode;
@@ -51,13 +52,18 @@ public class GlmAiProvider implements AiProvider {
                         )
                 ),
                 glm.getMaxTokens(),
-                glm.getTemperature()
+                glm.getTemperature(),
+                thinking(glm)
         );
 
-        String answer = sendChatRequest(glm, body);
+        GlmAnswer answer = sendChatRequest(glm, body);
+
+        if (answer.truncated()) {
+            log.warn("GLM answer was cut by max_tokens. usage={}", answer.usage());
+        }
 
         return new AiProviderResponse(
-                answer,
+                answer.content(),
                 glm.getModel()
         );
     }
@@ -90,18 +96,47 @@ public class GlmAiProvider implements AiProvider {
                         )
                 ),
                 glm.getMaxTokens(),
-                glm.getTemperature()
+                glm.getTemperature(),
+                thinking(glm)
         );
 
-        String rawAnswer = sendChatRequest(glm, body);
-
-        return parseSummaryResponse(
-                rawAnswer,
-                glm.getModel()
-        );
+        return toSummary(sendChatRequest(glm, body), glm.getModel());
     }
 
-    private String sendChatRequest(
+    /**
+     * Обрезанную по max_tokens сводку не сохраняем: из «TITLE: Сводка…» оставалось «TITLE: С».
+     * Ошибка здесь — AiService вернёт предыдущую сводку и попробует снова при следующем запросе.
+     */
+    static AiSummaryProviderResponse toSummary(GlmAnswer answer, String model) {
+        if (answer.truncated()) {
+            log.warn("GLM summary was cut by max_tokens, not saving it. usage={}", answer.usage());
+
+            throw new ApiException(
+                    HttpStatus.BAD_GATEWAY,
+                    ApiErrorCode.INTERNAL_ERROR,
+                    "AI не успел сформировать сводку"
+            );
+        }
+
+        return parseSummaryResponse(answer.content(), model);
+    }
+
+    /**
+     * Режим рассуждений GLM-4.5 (thinking) по умолчанию включён и тратит тот же лимит max_tokens,
+     * что и ответ. Для коротких сводок и ответов он не нужен: выключаем (AI_GLM_THINKING=disabled).
+     * Пустое значение — параметр не передаётся, модель решает сама.
+     */
+    private static GlmThinking thinking(AiProperties.Glm glm) {
+        String value = glm.getThinking();
+
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+
+        return new GlmThinking(value.trim());
+    }
+
+    private GlmAnswer sendChatRequest(
             AiProperties.Glm glm,
             GlmChatRequest body
     ) {
@@ -278,7 +313,7 @@ public class GlmAiProvider implements AiProvider {
         );
     }
 
-    private AiSummaryProviderResponse parseSummaryResponse(
+    static AiSummaryProviderResponse parseSummaryResponse(
             String rawAnswer,
             String model
     ) {
@@ -354,7 +389,16 @@ public class GlmAiProvider implements AiProvider {
         }
 
         if (summary.isBlank()) {
-            summary = rawAnswer.trim();
+            // Модель ответила не по формату — берём текст без служебных строк TITLE:/ITEMS:.
+            summary = withoutLabelLines(rawAnswer);
+        }
+
+        if (summary.isBlank()) {
+            throw new ApiException(
+                    HttpStatus.BAD_GATEWAY,
+                    ApiErrorCode.INTERNAL_ERROR,
+                    "AI вернул сводку без текста"
+            );
         }
 
         return new AiSummaryProviderResponse(
@@ -365,7 +409,17 @@ public class GlmAiProvider implements AiProvider {
         );
     }
 
-    private String normalizeItemLine(String line) {
+    private static String withoutLabelLines(String rawAnswer) {
+        return rawAnswer.lines()
+                .map(String::trim)
+                .filter(line -> !line.isBlank())
+                .filter(line -> !line.toUpperCase().startsWith("TITLE:"))
+                .filter(line -> !line.toUpperCase().startsWith("ITEMS:"))
+                .collect(Collectors.joining(" "))
+                .trim();
+    }
+
+    private static String normalizeItemLine(String line) {
         String value = line.trim();
 
         while (value.startsWith("-")
@@ -390,7 +444,7 @@ public class GlmAiProvider implements AiProvider {
         return value == null || value.isBlank();
     }
 
-    private String extractAnswer(GlmChatResponse response) {
+    private GlmAnswer extractAnswer(GlmChatResponse response) {
         if (response == null || response.choices() == null || response.choices().isEmpty()) {
             throw new ApiException(
                     HttpStatus.INTERNAL_SERVER_ERROR,
@@ -412,31 +466,61 @@ public class GlmAiProvider implements AiProvider {
             );
         }
 
-        return firstChoice.message().content().trim();
+        return new GlmAnswer(
+                firstChoice.message().content().trim(),
+                firstChoice.finishReason(),
+                response.usage()
+        );
     }
 
-    private record GlmChatRequest(
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record GlmChatRequest(
             String model,
             List<GlmMessage> messages,
             @JsonProperty("max_tokens")
             Integer maxTokens,
-            Double temperature
+            Double temperature,
+            GlmThinking thinking
     ) {
     }
 
-    private record GlmMessage(
+    record GlmThinking(String type) {
+    }
+
+    /** Ответ модели: текст, причина остановки (length — упёрлись в max_tokens) и расход токенов. */
+    record GlmAnswer(String content, String finishReason, GlmUsage usage) {
+
+        boolean truncated() {
+            return "length".equalsIgnoreCase(finishReason);
+        }
+    }
+
+    record GlmUsage(
+            @JsonProperty("prompt_tokens")
+            Integer promptTokens,
+            @JsonProperty("completion_tokens")
+            Integer completionTokens,
+            @JsonProperty("total_tokens")
+            Integer totalTokens
+    ) {
+    }
+
+    record GlmMessage(
             String role,
             String content
     ) {
     }
 
     private record GlmChatResponse(
-            List<GlmChoice> choices
+            List<GlmChoice> choices,
+            GlmUsage usage
     ) {
     }
 
     private record GlmChoice(
-            GlmMessage message
+            GlmMessage message,
+            @JsonProperty("finish_reason")
+            String finishReason
     ) {
     }
 }
