@@ -81,6 +81,12 @@ ai:
     temperature: ${AI_GLM_TEMPERATURE:0.6}
     # Режим рассуждений GLM-4.5 тратит тот же лимит max-tokens, что и ответ, и обрезал сводки.
     thinking: ${AI_GLM_THINKING:disabled}
+    # Модель с «зрением» для описания фото в чате.
+    vision-model: ${AI_GLM_VISION_MODEL:glm-4.6v}
+  media:
+    # Фоновая обработка фото для AI: описание и текст на фото попадают в сводки и ответы.
+    enabled: ${AI_MEDIA_ENABLED:true}
+    batch-size: ${AI_MEDIA_BATCH_SIZE:5}
   summary:
     interval-hours: ${AI_SUMMARY_INTERVAL_HOURS:3}
     max-messages: ${AI_SUMMARY_MAX_MESSAGES:100}

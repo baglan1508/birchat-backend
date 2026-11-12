@@ -26,7 +26,9 @@ import kz.birchat.api.exception.ApiException;
 import kz.birchat.api.repository.AiCompanySummaryRepository;
 import kz.birchat.api.repository.AiMessageRepository;
 import kz.birchat.api.repository.AiThreadRepository;
+import kz.birchat.api.repository.ChatAttachmentRepository;
 import kz.birchat.api.repository.ChatMessageRepository;
+import kz.birchat.api.repository.CompanyFileRepository;
 import kz.birchat.api.repository.CompanyMemberRepository;
 import kz.birchat.api.repository.CompanyRepository;
 import kz.birchat.api.entity.CompanyMemberEntity;
@@ -47,6 +49,7 @@ import java.time.ZonedDateTime;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -74,6 +77,8 @@ public class AiService {
     private final AiMessageRepository aiMessageRepository;
     private final AiCompanySummaryRepository aiCompanySummaryRepository;
     private final ChatMessageRepository chatMessageRepository;
+    private final ChatAttachmentRepository chatAttachmentRepository;
+    private final CompanyFileRepository companyFileRepository;
     private final AiProviderResolver aiProviderResolver;
     private final AiProperties aiProperties;
     private final EntityManager entityManager;
@@ -300,7 +305,13 @@ public class AiService {
                 summary.getPeriodEnd()
         );
 
-        return count != null && count > 0;
+        if (count != null && count > 0) {
+            return true;
+        }
+
+        // Описание фото приходит через минуту после отправки — тогда сводку стоит пересчитать.
+        return summary.getGeneratedAt() != null
+                && companyFileRepository.countAnalyzedAfter(companyId, summary.getGeneratedAt()) > 0;
     }
 
     private AiCompanySummaryEntity generateAndSaveCompanySummary(
@@ -364,7 +375,7 @@ public class AiService {
             LocalDateTime periodStart,
             LocalDateTime periodEnd
     ) {
-        return chatMessageRepository
+        List<ChatMessageEntity> messages = chatMessageRepository
                 .findGeneralChatMessagesForAiSummary(
                         companyId,
                         periodStart,
@@ -375,15 +386,13 @@ public class AiService {
                 .filter(AiService::hasAiContent)
                 .sorted(Comparator.comparing(ChatMessageEntity::getCreatedAt)
                         .thenComparing(ChatMessageEntity::getId))
-                .map(message -> toProviderMessage(
-                        message,
-                        summaryMaxMessageLength()
-                ))
                 .toList();
+
+        return toProviderMessages(messages, summaryMaxMessageLength());
     }
 
     private List<AiProviderMessage> loadRecentGeneralChatContext(UUID companyId) {
-        return chatMessageRepository
+        List<ChatMessageEntity> messages = chatMessageRepository
                 .findLatestGeneralChatMessagesForAiContext(
                         companyId,
                         PageRequest.of(0, AI_CHAT_CONTEXT_LIMIT)
@@ -392,11 +401,46 @@ public class AiService {
                 .filter(AiService::hasAiContent)
                 .sorted(Comparator.comparing(ChatMessageEntity::getCreatedAt)
                         .thenComparing(ChatMessageEntity::getId))
-                .map(message -> toProviderMessage(
-                        message,
-                        AI_CONTEXT_MESSAGE_MAX_LENGTH
-                ))
                 .toList();
+
+        return toProviderMessages(messages, AI_CONTEXT_MESSAGE_MAX_LENGTH);
+    }
+
+    /**
+     * Сообщения для AI вместе с тем, что модель поняла из вложений (описание фото).
+     * Описания берутся одним запросом для всех сообщений с вложениями.
+     */
+    private List<AiProviderMessage> toProviderMessages(List<ChatMessageEntity> messages, int maxLength) {
+        Map<UUID, String> mediaTexts = loadMediaTexts(messages);
+
+        return messages.stream()
+                .map(message -> toProviderMessage(message, mediaTexts.get(message.getId()), maxLength))
+                .toList();
+    }
+
+    private Map<UUID, String> loadMediaTexts(List<ChatMessageEntity> messages) {
+        List<UUID> withAttachments = messages.stream()
+                .filter(message -> attachmentLabel(message.getType()) != null)
+                .map(ChatMessageEntity::getId)
+                .toList();
+
+        if (withAttachments.isEmpty()) {
+            return Map.of();
+        }
+
+        return chatAttachmentRepository.findByMessageIds(withAttachments)
+                .stream()
+                .filter(attachment -> attachment.getFile() != null)
+                .filter(attachment -> FileAnalysisService.AI_DONE.equals(attachment.getFile().getAiStatus()))
+                .filter(attachment -> attachment.getFile().getAiText() != null
+                        && !attachment.getFile().getAiText().isBlank())
+                .collect(Collectors.groupingBy(
+                        attachment -> attachment.getMessage().getId(),
+                        Collectors.mapping(
+                                attachment -> attachment.getFile().getAiText().trim(),
+                                Collectors.joining("; ")
+                        )
+                ));
     }
 
     /**
@@ -411,11 +455,22 @@ public class AiService {
 
     /** Текст сообщения для AI: метка вложения («[фото]») и подпись, если есть. */
     static String aiContent(ChatMessageEntity message) {
+        return aiContent(message, null);
+    }
+
+    /**
+     * С описанием вложения от модели: «[фото: накладная №15 …] подпись».
+     */
+    static String aiContent(ChatMessageEntity message, String mediaText) {
         String text = message.getContent() == null ? "" : message.getContent().trim();
         String label = attachmentLabel(message.getType());
 
         if (label == null) {
             return text;
+        }
+
+        if (mediaText != null && !mediaText.isBlank()) {
+            label = label.substring(0, label.length() - 1) + ": " + mediaText.trim() + "]";
         }
 
         return text.isEmpty() ? label : label + " " + text;
@@ -436,12 +491,17 @@ public class AiService {
 
     private AiProviderMessage toProviderMessage(
             ChatMessageEntity message,
+            String mediaText,
             int maxLength
     ) {
         return new AiProviderMessage(
                 "GENERAL_CHAT",
                 buildAuthor(message),
-                truncateForAiContext(aiContent(message), maxLength),
+                // С описанием фото сообщение длиннее — даём ему вдвое больше места.
+                truncateForAiContext(
+                        aiContent(message, mediaText),
+                        mediaText == null ? maxLength : maxLength * 2
+                ),
                 message.getCreatedAt() == null
                         ? null
                         : TimeUtils.toUtcOffset(message.getCreatedAt()).toString()

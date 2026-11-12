@@ -207,6 +207,7 @@ public class CompanyFileService {
         entity.setFileSize(storedFile.fileSize());
         entity.setStorageKey(storedFile.storageKey());
         entity.setFileUrl(storedFile.fileUrl());
+        FileAnalysisService.markForAnalysisIfSupported(entity);
         entity.setCreatedAt(TimeUtils.utcNow());
         entity.setUpdatedAt(TimeUtils.utcNow());
 
@@ -356,6 +357,7 @@ public class CompanyFileService {
         }
 
         file.setStatus(STATUS_READY);
+        FileAnalysisService.markForAnalysisIfSupported(file);
         file.setUpdatedAt(TimeUtils.utcNow());
 
         return toResponse(companyFileRepository.save(file));

@@ -7,4 +7,11 @@ public interface AiProvider {
     AiProviderResponse ask(AiProviderRequest request);
 
     AiSummaryProviderResponse summarize(AiSummaryProviderRequest request);
+
+    /**
+     * Описание фото для контекста AI: что изображено и главный текст на нём.
+     *
+     * @param imageUrl временная ссылка на файл в хранилище (модель скачивает фото сама)
+     */
+    AiMediaResult describeImage(String imageUrl);
 }
