@@ -79,6 +79,8 @@ ai:
     base-url: ${AI_GLM_BASE_URL:https://api.z.ai/api/paas/v4}
     max-tokens: ${AI_GLM_MAX_TOKENS:1024}
     temperature: ${AI_GLM_TEMPERATURE:0.6}
+    # Режим рассуждений GLM-4.5 тратит тот же лимит max-tokens, что и ответ, и обрезал сводки.
+    thinking: ${AI_GLM_THINKING:disabled}
   summary:
     interval-hours: ${AI_SUMMARY_INTERVAL_HOURS:3}
     max-messages: ${AI_SUMMARY_MAX_MESSAGES:100}
