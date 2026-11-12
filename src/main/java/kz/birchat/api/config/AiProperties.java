@@ -14,6 +14,16 @@ public class AiProperties {
     private String provider = "mock";
     private Summary summary = new Summary();
     private Glm glm = new Glm();
+    private Media media = new Media();
+
+    /** Фоновая обработка вложений для AI (описания фото). */
+    @Getter
+    @Setter
+    public static class Media {
+        private boolean enabled = true;
+        /** Сколько файлов обрабатывать за один проход. */
+        private int batchSize = 5;
+    }
 
     @Getter
     @Setter
@@ -25,6 +35,8 @@ public class AiProperties {
         private Double temperature = 0.6;
         /** disabled — без рассуждений (быстрее, не тратит max_tokens); enabled; пусто — по умолчанию модели. */
         private String thinking = "disabled";
+        /** Модель с «зрением» для описания фото. */
+        private String visionModel = "glm-4.6v";
     }
     @Getter
     @Setter

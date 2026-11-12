@@ -54,6 +54,29 @@ public class CompanyFileEntity {
     @Column(name = "status", nullable = false)
     private String status;
 
+    /** Обработка файла для AI (V17): NULL, PENDING, DONE, FAILED, SKIPPED. */
+    @Column(name = "ai_status")
+    private String aiStatus;
+
+    /** Что на фото / расшифровка — для контекста AI. */
+    @Column(name = "ai_text")
+    private String aiText;
+
+    @Column(name = "ai_model")
+    private String aiModel;
+
+    @Column(name = "ai_attempts", nullable = false)
+    private int aiAttempts;
+
+    @Column(name = "ai_error")
+    private String aiError;
+
+    @Column(name = "ai_next_attempt_at")
+    private LocalDateTime aiNextAttemptAt;
+
+    @Column(name = "ai_processed_at")
+    private LocalDateTime aiProcessedAt;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

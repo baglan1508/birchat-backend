@@ -77,4 +77,29 @@ public interface CompanyFileRepository extends JpaRepository<CompanyFileEntity, 
             @Param("cutoff") java.time.LocalDateTime cutoff,
             Pageable pageable
     );
+
+    /** Очередь обработки для AI: ожидающие файлы, у которых подошло время попытки. */
+    @Query("""
+        SELECT f FROM CompanyFileEntity f
+        WHERE f.aiStatus = 'PENDING'
+          AND f.status = 'READY'
+          AND (f.aiNextAttemptAt IS NULL OR f.aiNextAttemptAt <= :now)
+        ORDER BY f.createdAt ASC
+        """)
+    List<CompanyFileEntity> findPendingForAi(
+            @Param("now") java.time.LocalDateTime now,
+            Pageable pageable
+    );
+
+    /** Сколько файлов компании получили описание для AI после указанного момента. */
+    @Query("""
+        SELECT COUNT(f) FROM CompanyFileEntity f
+        WHERE f.company.id = :companyId
+          AND f.aiStatus = 'DONE'
+          AND f.aiProcessedAt > :after
+        """)
+    long countAnalyzedAfter(
+            @Param("companyId") UUID companyId,
+            @Param("after") java.time.LocalDateTime after
+    );
 }
