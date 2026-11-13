@@ -82,6 +82,8 @@ class GlmAiProviderTest {
         assertTrue(json.contains("\"model\":\"glm-4.6v\""), json);
         assertTrue(json.contains("{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://storage.example/signed/photo.jpg\"}}"), json);
         assertTrue(json.contains("\"type\":\"text\""), json);
+        assertTrue(json.contains("Текст на фото"), json);
+        assertTrue(json.contains("\"max_tokens\":2500"), json);
         assertTrue(json.contains("\"thinking\":{\"type\":\"disabled\"}"), json);
     }
 }

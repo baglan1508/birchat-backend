@@ -290,4 +290,32 @@ class AiServiceTest {
         assertEquals("[фото: Накладная №15 от ТОО «Арман», 150 000 тг] Вот накладная",
                 AiService.aiContent(photo, "Накладная №15 от ТОО «Арман», 150 000 тг"));
     }
+
+    @Test
+    void documentNameAndTextReachAi() {
+        kz.birchat.api.entity.CompanyFileEntity receipt = new kz.birchat.api.entity.CompanyFileEntity();
+        receipt.setOriginalFileName("Чек Kaspi.pdf");
+        receipt.setAiStatus(FileAnalysisService.AI_DONE);
+        receipt.setAiText("PDF, 1 стр.:\nИтого 1 150 тг");
+
+        assertEquals("«Чек Kaspi.pdf» — PDF, 1 стр.:\nИтого 1 150 тг",
+                AiService.mediaText(ChatMessageType.DOCUMENT, receipt));
+    }
+
+    @Test
+    void unreadDocumentIsKnownByName() {
+        kz.birchat.api.entity.CompanyFileEntity contract = new kz.birchat.api.entity.CompanyFileEntity();
+        contract.setOriginalFileName("Договор аренды.docx");
+
+        assertEquals("«Договор аренды.docx»", AiService.mediaText(ChatMessageType.DOCUMENT, contract));
+    }
+
+    @Test
+    void photoWithoutDescriptionAddsNothing() {
+        kz.birchat.api.entity.CompanyFileEntity photo = new kz.birchat.api.entity.CompanyFileEntity();
+        photo.setOriginalFileName("IMG_2041.jpg");
+        photo.setAiStatus(FileAnalysisService.AI_PENDING);
+
+        assertNull(AiService.mediaText(ChatMessageType.IMAGE, photo));
+    }
 }

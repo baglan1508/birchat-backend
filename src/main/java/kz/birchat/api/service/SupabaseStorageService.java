@@ -24,6 +24,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.Objects;
@@ -273,6 +277,53 @@ public class SupabaseStorageService {
         }
     }
 
+    /**
+     * Скачать файл из хранилища на диск сервера (для чтения PDF). Поток пишется сразу в файл —
+     * файл до 20 МБ не держится целиком в памяти.
+     */
+    public void downloadToFile(String storageKey, Path target) {
+        validateConfig();
+
+        try {
+            longClient().get()
+                    .uri("/storage/v1/object/" + properties.bucket() + "/" + storageKey)
+                    .header("apikey", properties.serviceKey())
+                    .headers(this::applyLegacyBearer)
+                    .exchange((request, response) -> {
+                        if (response.getStatusCode().isError()) {
+                            throw storageError("Не удалось скачать файл: " + response.getStatusCode().value());
+                        }
+
+                        try (InputStream body = response.getBody()) {
+                            Files.copy(body, target, StandardCopyOption.REPLACE_EXISTING);
+                        }
+
+                        return null;
+                    });
+        } catch (RestClientResponseException ex) {
+            throw storageError("Не удалось скачать файл: " + ex.getStatusCode().value());
+        }
+    }
+
+    /** Служебная загрузка (страница скана PDF для модели). Перезаписывает объект с тем же ключом. */
+    public void uploadBytes(String storageKey, byte[] bytes, String contentType) {
+        validateConfig();
+
+        try {
+            longClient().post()
+                    .uri("/storage/v1/object/" + properties.bucket() + "/" + storageKey)
+                    .header("apikey", properties.serviceKey())
+                    .headers(this::applyLegacyBearer)
+                    .header(HttpHeaders.CONTENT_TYPE, contentType)
+                    .header("x-upsert", "true")
+                    .body(bytes)
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RestClientResponseException ex) {
+            throw storageError("Не удалось загрузить файл: " + ex.getStatusCode().value());
+        }
+    }
+
     @SuppressWarnings("unchecked")
     static StoredObjectInfo parseObjectInfo(Map<String, Object> info) {
         if (info == null || info.isEmpty()) {
@@ -326,6 +377,18 @@ public class SupabaseStorageService {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(Duration.ofSeconds(5));
         requestFactory.setReadTimeout(Duration.ofSeconds(15));
+
+        return RestClient.builder()
+                .requestFactory(requestFactory)
+                .baseUrl(removeTrailingSlash(properties.url()))
+                .build();
+    }
+
+    /** Для скачивания и загрузки файлов целиком — ответ может идти дольше 15 секунд. */
+    private RestClient longClient() {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(Duration.ofSeconds(5));
+        requestFactory.setReadTimeout(Duration.ofSeconds(60));
 
         return RestClient.builder()
                 .requestFactory(requestFactory)

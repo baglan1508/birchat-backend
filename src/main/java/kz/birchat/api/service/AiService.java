@@ -18,6 +18,7 @@ import kz.birchat.api.entity.AiMessageEntity;
 import kz.birchat.api.entity.AiThreadEntity;
 import kz.birchat.api.entity.ChatMessageEntity;
 import kz.birchat.api.entity.CompanyEntity;
+import kz.birchat.api.entity.CompanyFileEntity;
 import kz.birchat.api.entity.UserEntity;
 import kz.birchat.api.enums.AiMessageRole;
 import kz.birchat.api.enums.ChatMessageType;
@@ -65,6 +66,8 @@ public class AiService {
 
     private static final int AI_CHAT_CONTEXT_LIMIT = 30;
     private static final int AI_CONTEXT_MESSAGE_MAX_LENGTH = 500;
+    /** Текст чека или PDF в вопросе к AI — целиком (в сводке — короче, см. summaryMaxMessageLength). */
+    private static final int AI_CONTEXT_MEDIA_MAX_LENGTH = 6000;
 
     private static final int DEFAULT_SUMMARY_INTERVAL_HOURS = 3;
     private static final int DEFAULT_SUMMARY_MAX_MESSAGES = 100;
@@ -388,7 +391,9 @@ public class AiService {
                         .thenComparing(ChatMessageEntity::getId))
                 .toList();
 
-        return toProviderMessages(messages, summaryMaxMessageLength());
+        int maxLength = summaryMaxMessageLength();
+
+        return toProviderMessages(messages, maxLength, maxLength * 2);
     }
 
     private List<AiProviderMessage> loadRecentGeneralChatContext(UUID companyId) {
@@ -403,18 +408,26 @@ public class AiService {
                         .thenComparing(ChatMessageEntity::getId))
                 .toList();
 
-        return toProviderMessages(messages, AI_CONTEXT_MESSAGE_MAX_LENGTH);
+        return toProviderMessages(messages, AI_CONTEXT_MESSAGE_MAX_LENGTH, AI_CONTEXT_MEDIA_MAX_LENGTH);
     }
 
     /**
      * Сообщения для AI вместе с тем, что модель поняла из вложений (описание фото).
      * Описания берутся одним запросом для всех сообщений с вложениями.
      */
-    private List<AiProviderMessage> toProviderMessages(List<ChatMessageEntity> messages, int maxLength) {
+    private List<AiProviderMessage> toProviderMessages(
+            List<ChatMessageEntity> messages,
+            int maxLength,
+            int mediaMaxLength
+    ) {
         Map<UUID, String> mediaTexts = loadMediaTexts(messages);
 
         return messages.stream()
-                .map(message -> toProviderMessage(message, mediaTexts.get(message.getId()), maxLength))
+                .map(message -> {
+                    String mediaText = mediaTexts.get(message.getId());
+
+                    return toProviderMessage(message, mediaText, mediaText == null ? maxLength : mediaMaxLength);
+                })
                 .toList();
     }
 
@@ -428,19 +441,42 @@ public class AiService {
             return Map.of();
         }
 
+        Map<UUID, ChatMessageType> types = messages.stream()
+                .collect(Collectors.toMap(ChatMessageEntity::getId, ChatMessageEntity::getType, (a, b) -> a));
+
         return chatAttachmentRepository.findByMessageIds(withAttachments)
                 .stream()
                 .filter(attachment -> attachment.getFile() != null)
-                .filter(attachment -> FileAnalysisService.AI_DONE.equals(attachment.getFile().getAiStatus()))
-                .filter(attachment -> attachment.getFile().getAiText() != null
-                        && !attachment.getFile().getAiText().isBlank())
+                .map(attachment -> Map.entry(
+                        attachment.getMessage().getId(),
+                        mediaText(types.get(attachment.getMessage().getId()), attachment.getFile())
+                ))
+                .filter(entry -> entry.getValue() != null)
                 .collect(Collectors.groupingBy(
-                        attachment -> attachment.getMessage().getId(),
-                        Collectors.mapping(
-                                attachment -> attachment.getFile().getAiText().trim(),
-                                Collectors.joining("; ")
-                        )
+                        Map.Entry::getKey,
+                        Collectors.mapping(Map.Entry::getValue, Collectors.joining("; "))
                 ));
+    }
+
+    /**
+     * Что AI узнаёт о вложении: текст, который модель прочитала из фото или PDF,
+     * а для документов ещё и имя файла — «договор аренды.docx» само по себе говорит о многом.
+     */
+    static String mediaText(ChatMessageType type, CompanyFileEntity file) {
+        String aiText = FileAnalysisService.AI_DONE.equals(file.getAiStatus())
+                && file.getAiText() != null
+                && !file.getAiText().isBlank()
+                ? file.getAiText().trim()
+                : null;
+
+        if (type != ChatMessageType.DOCUMENT || file.getOriginalFileName() == null
+                || file.getOriginalFileName().isBlank()) {
+            return aiText;
+        }
+
+        String name = "«" + file.getOriginalFileName().trim() + "»";
+
+        return aiText == null ? name : name + " — " + aiText;
     }
 
     /**
@@ -497,11 +533,7 @@ public class AiService {
         return new AiProviderMessage(
                 "GENERAL_CHAT",
                 buildAuthor(message),
-                // С описанием фото сообщение длиннее — даём ему вдвое больше места.
-                truncateForAiContext(
-                        aiContent(message, mediaText),
-                        mediaText == null ? maxLength : maxLength * 2
-                ),
+                truncateForAiContext(aiContent(message, mediaText), maxLength),
                 message.getCreatedAt() == null
                         ? null
                         : TimeUtils.toUtcOffset(message.getCreatedAt()).toString()
