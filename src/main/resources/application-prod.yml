@@ -83,6 +83,8 @@ ai:
     thinking: ${AI_GLM_THINKING:disabled}
     # Модель с «зрением» для описания фото в чате.
     vision-model: ${AI_GLM_VISION_MODEL:glm-4.6v}
+    # Распознавание речи для голосовых в чате.
+    asr-model: ${AI_GLM_ASR_MODEL:glm-asr-2512}
   history:
     # Диалог с AI начинается заново каждый день (полночь по Алматы); старые вопросы удаляет
     # ночная чистка (CLEANUP_AI_HISTORY_RETENTION).
@@ -91,6 +93,8 @@ ai:
     # Фоновая обработка фото для AI: описание и текст на фото попадают в сводки и ответы.
     enabled: ${AI_MEDIA_ENABLED:true}
     batch-size: ${AI_MEDIA_BATCH_SIZE:5}
+    # Голосовые длиннее расшифровываются только в первых N секундах.
+    audio-max-seconds: ${AI_MEDIA_AUDIO_MAX_SECONDS:600}
   summary:
     interval-hours: ${AI_SUMMARY_INTERVAL_HOURS:3}
     max-messages: ${AI_SUMMARY_MAX_MESSAGES:100}
