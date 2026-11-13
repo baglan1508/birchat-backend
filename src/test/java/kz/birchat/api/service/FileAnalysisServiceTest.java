@@ -6,6 +6,7 @@ import kz.birchat.api.ai.AiProviderResolver;
 import kz.birchat.api.config.AiProperties;
 import kz.birchat.api.entity.CompanyFileEntity;
 import kz.birchat.api.repository.CompanyFileRepository;
+import kz.birchat.api.service.media.TestPdfs;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -14,6 +15,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Pageable;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -22,6 +24,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -136,17 +139,62 @@ class FileAnalysisServiceTest {
     }
 
     @Test
-    void onlyPhotosAreQueued() {
+    void photosAndPdfsAreQueued() {
         CompanyFileEntity photo = new CompanyFileEntity();
         photo.setContentType("image/png");
         CompanyFileEntity pdf = new CompanyFileEntity();
         pdf.setContentType("application/pdf");
+        CompanyFileEntity docx = new CompanyFileEntity();
+        docx.setContentType("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
 
         FileAnalysisService.markForAnalysisIfSupported(photo);
         FileAnalysisService.markForAnalysisIfSupported(pdf);
+        FileAnalysisService.markForAnalysisIfSupported(docx);
 
         assertEquals(FileAnalysisService.AI_PENDING, photo.getAiStatus());
-        assertNull(pdf.getAiStatus());
+        assertEquals(FileAnalysisService.AI_PENDING, pdf.getAiStatus());
+        assertNull(docx.getAiStatus());
+    }
+
+    @Test
+    void pdfTextIsReadWithoutModel() throws Exception {
+        CompanyFileEntity pdf = pendingFile("application/pdf", 50_000L);
+        when(companyFileRepository.findById(pdf.getId())).thenReturn(Optional.of(pdf));
+        doAnswer(invocation -> {
+            TestPdfs.textPdf(invocation.getArgument(1), "Kaspi Gold receipt", "Item A 2 x 500 = 1000", "TOTAL 1000 KZT");
+            return null;
+        }).when(storageService).downloadToFile(eq(KEY), any(Path.class));
+
+        service.process(pdf.getId());
+
+        assertEquals(FileAnalysisService.AI_DONE, pdf.getAiStatus());
+        assertEquals(FileAnalysisService.PDF_TEXT_MODEL, pdf.getAiModel());
+        assertTrue(pdf.getAiText().startsWith("PDF, 1 стр.:\n"), pdf.getAiText());
+        assertTrue(pdf.getAiText().contains("Item A 2 x 500 = 1000"), pdf.getAiText());
+        verifyNoInteractions(aiProviderResolver);
+    }
+
+    @Test
+    void scannedPdfPagesAreReadByModelAndTemporaryPagesDeleted() throws Exception {
+        System.setProperty("java.awt.headless", "true");
+        CompanyFileEntity scan = pendingFile("application/pdf", 300_000L);
+        String pageKey = KEY + ".ai-page-1.jpg";
+        when(companyFileRepository.findById(scan.getId())).thenReturn(Optional.of(scan));
+        doAnswer(invocation -> {
+            TestPdfs.blankPdf(invocation.getArgument(1));
+            return null;
+        }).when(storageService).downloadToFile(eq(KEY), any(Path.class));
+        when(storageService.createSignedUrls(List.of(pageKey), 600)).thenReturn(Map.of(pageKey, SIGNED_URL));
+        when(aiProviderResolver.resolve()).thenReturn(aiProvider);
+        when(aiProvider.describeImage(SIGNED_URL))
+                .thenReturn(new AiMediaResult("Что на фото: Накладная\nТекст на фото: №15", "glm-4.6v"));
+
+        service.process(scan.getId());
+
+        assertEquals(FileAnalysisService.AI_DONE, scan.getAiStatus());
+        assertEquals("PDF-скан, 1 стр.:\nЧто на фото: Накладная\nТекст на фото: №15", scan.getAiText());
+        verify(storageService).uploadBytes(eq(pageKey), any(byte[].class), eq("image/jpeg"));
+        verify(storageService).deleteObjects(List.of(pageKey));
     }
 
     @Test
