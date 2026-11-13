@@ -47,7 +47,9 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -62,6 +64,8 @@ public class AiService {
     private static final String STATUS_ACTIVE = "ACTIVE";
 
     private static final int DEFAULT_HISTORY_LIMIT = 50;
+    public static final String HISTORY_ORDER_OLDEST = "oldest";
+    public static final String HISTORY_ORDER_NEWEST = "newest";
     private static final int MAX_HISTORY_LIMIT = 100;
 
     private static final int AI_CHAT_CONTEXT_LIMIT = 30;
@@ -235,20 +239,42 @@ public class AiService {
             UUID userId,
             Integer limit
     ) {
+        return getHistory(companyId, userId, limit, HISTORY_ORDER_OLDEST);
+    }
+
+    /**
+     * Диалог с AI на экране.
+     *
+     * По умолчанию — только сегодняшний (с полуночи по Алматы): вчерашние ответы «что было сегодня»
+     * больше не висят на экране. Старые вопросы удаляет ночная чистка.
+     *
+     * @param order oldest — от старых к новым (как в чате); newest — новые вопросы сверху,
+     *              внутри каждого — вопрос, затем ответ
+     */
+    @Transactional(readOnly = true)
+    public AiHistoryResponse getHistory(
+            UUID companyId,
+            UUID userId,
+            Integer limit,
+            String order
+    ) {
         checkActiveMember(companyId, userId);
 
         int safeLimit = normalizeHistoryLimit(limit);
+        boolean newestFirst = isNewestFirst(order);
 
         return aiThreadRepository.findDefaultThread(companyId, userId)
                 .map(thread -> {
-                    List<AiHistoryMessageResponse> messages = aiMessageRepository
-                            .findLatestByThreadId(
-                                    thread.getId(),
-                                    PageRequest.of(0, safeLimit)
-                            )
+                    List<AiMessageEntity> ascending = loadHistory(thread.getId(), safeLimit)
                             .stream()
                             .sorted(Comparator.comparing(AiMessageEntity::getCreatedAt)
                                     .thenComparing(AiMessageEntity::getId))
+                            .toList();
+
+                    List<AiHistoryMessageResponse> messages = (newestFirst
+                            ? newestExchangesFirst(ascending)
+                            : ascending)
+                            .stream()
                             .map(this::toHistoryMessageResponse)
                             .toList();
 
@@ -261,6 +287,63 @@ public class AiService {
                         null,
                         List.of()
                 ));
+    }
+
+    private List<AiMessageEntity> loadHistory(UUID threadId, int limit) {
+        boolean dailyReset = aiProperties.getHistory() == null || aiProperties.getHistory().isDailyReset();
+
+        if (!dailyReset) {
+            return aiMessageRepository.findLatestByThreadId(threadId, PageRequest.of(0, limit));
+        }
+
+        return aiMessageRepository.findLatestByThreadIdSince(
+                threadId,
+                buildTodayPeriodStartUtc(TimeUtils.utcNow()),
+                PageRequest.of(0, limit)
+        );
+    }
+
+    private static boolean isNewestFirst(String order) {
+        if (order == null || order.isBlank() || HISTORY_ORDER_OLDEST.equalsIgnoreCase(order.trim())) {
+            return false;
+        }
+
+        if (HISTORY_ORDER_NEWEST.equalsIgnoreCase(order.trim())) {
+            return true;
+        }
+
+        throw ApiException.badRequest(ApiErrorCode.VALIDATION, "order: oldest или newest");
+    }
+
+    /**
+     * Новые вопросы сверху, но внутри каждого — сначала вопрос, потом ответ
+     * (простой разворот списка поставил бы ответ над вопросом).
+     */
+    static List<AiMessageEntity> newestExchangesFirst(List<AiMessageEntity> ascending) {
+        List<List<AiMessageEntity>> exchanges = new ArrayList<>();
+
+        for (AiMessageEntity message : ascending) {
+            if (exchanges.isEmpty() || message.getRole() == AiMessageRole.USER) {
+                exchanges.add(new ArrayList<>());
+            }
+
+            exchanges.get(exchanges.size() - 1).add(message);
+        }
+
+        Collections.reverse(exchanges);
+
+        return exchanges.stream()
+                .flatMap(List::stream)
+                .toList();
+    }
+
+    /** «Новый диалог»: удаляет вопросы и ответы пользователя в этой компании. */
+    @Transactional
+    public void clearHistory(UUID companyId, UUID userId) {
+        checkActiveMember(companyId, userId);
+
+        aiThreadRepository.findDefaultThread(companyId, userId)
+                .ifPresent(thread -> aiMessageRepository.deleteByThreadId(thread.getId()));
     }
 
     private void requireDirector(UUID companyId, UUID userId) {

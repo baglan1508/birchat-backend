@@ -37,7 +37,7 @@ class DataCleanupServiceTest {
     private DataCleanupService service(Integer batchSize) {
         return new DataCleanupService(
                 repository,
-                new DataCleanupProperties(true, null, null, null, null, null, batchSize),
+                new DataCleanupProperties(true, null, null, null, null, null, null, batchSize),
                 companyFileRepository,
                 storageService
         );
@@ -94,13 +94,24 @@ class DataCleanupServiceTest {
     void canBeDisabled() {
         DataCleanupService disabled = new DataCleanupService(
                 repository,
-                new DataCleanupProperties(false, null, null, null, null, null, null),
+                new DataCleanupProperties(false, null, null, null, null, null, null, null),
                 companyFileRepository,
                 storageService
         );
 
         assertFalse(disabled.isEnabled());
         assertTrue(service(null).isEnabled());
+    }
+
+    @Test
+    void aiQuestionsOlderThanAWeekAreDeleted() {
+        ArgumentCaptor<LocalDateTime> cutoff = ArgumentCaptor.forClass(LocalDateTime.class);
+        when(repository.deleteAiMessagesBefore(cutoff.capture(), eq(1000))).thenReturn(12);
+
+        Map<String, Integer> report = service(null).cleanup();
+
+        assertEquals(12, report.get("aiHistory"));
+        assertAround(LocalDateTime.now(ZoneOffset.UTC).minusDays(7), cutoff.getValue());
     }
 
     private static void assertAround(LocalDateTime expected, LocalDateTime actual) {

@@ -16,6 +16,7 @@ public record DataCleanupProperties(
         Duration refreshTokenRetention,
         Duration authCodeRetention,
         Duration pendingFileRetention,
+        Duration aiHistoryRetention,
         Integer batchSize
 ) {
 }

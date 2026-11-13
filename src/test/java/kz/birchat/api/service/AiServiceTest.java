@@ -318,4 +318,73 @@ class AiServiceTest {
 
         assertNull(AiService.mediaText(ChatMessageType.IMAGE, photo));
     }
+
+    @Test
+    void historyShowsOnlyTodaysDialog() {
+        UUID userId = UUID.randomUUID();
+        AiThreadEntity thread = new AiThreadEntity();
+        thread.setId(UUID.randomUUID());
+        when(companyMemberRepository.existsByCompanyIdAndUserIdAndStatus(companyId, userId, "ACTIVE"))
+                .thenReturn(true);
+        when(aiThreadRepository.findDefaultThread(companyId, userId)).thenReturn(Optional.of(thread));
+        org.mockito.ArgumentCaptor<java.time.LocalDateTime> since =
+                org.mockito.ArgumentCaptor.forClass(java.time.LocalDateTime.class);
+        when(aiMessageRepository.findLatestByThreadIdSince(eq(thread.getId()), since.capture(), any()))
+                .thenReturn(List.of());
+
+        aiService.getHistory(companyId, userId, 50, "oldest");
+
+        // Полночь по Алматы (UTC+5) — 19:00 UTC предыдущего дня, не раньше чем сутки назад.
+        java.time.LocalDateTime nowUtc = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
+        assertEquals(19, since.getValue().getHour());
+        assertEquals(0, since.getValue().getMinute());
+        assertTrue(since.getValue().isAfter(nowUtc.minusDays(1)));
+        assertFalse(since.getValue().isAfter(nowUtc));
+        verify(aiMessageRepository, never()).findLatestByThreadId(any(), any());
+    }
+
+    @Test
+    void newestQuestionsGoFirstButQuestionStaysAboveAnswer() {
+        AiMessageEntity q1 = aiMessage(kz.birchat.api.enums.AiMessageRole.USER, "Что обсуждали?", 1);
+        AiMessageEntity a1 = aiMessage(kz.birchat.api.enums.AiMessageRole.ASSISTANT, "Короткая беседа", 2);
+        AiMessageEntity q2 = aiMessage(kz.birchat.api.enums.AiMessageRole.USER, "Было ли фото?", 3);
+        AiMessageEntity a2 = aiMessage(kz.birchat.api.enums.AiMessageRole.ASSISTANT, "Да, три фото", 4);
+
+        assertEquals(List.of(q2, a2, q1, a1), AiService.newestExchangesFirst(List.of(q1, a1, q2, a2)));
+    }
+
+    @Test
+    void unknownOrderIsRejected() {
+        UUID userId = UUID.randomUUID();
+        when(companyMemberRepository.existsByCompanyIdAndUserIdAndStatus(companyId, userId, "ACTIVE"))
+                .thenReturn(true);
+
+        ApiException exception = assertThrows(ApiException.class,
+                () -> aiService.getHistory(companyId, userId, 50, "sideways"));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+    }
+
+    @Test
+    void newDialogDeletesOwnQuestionsAndAnswers() {
+        UUID userId = UUID.randomUUID();
+        AiThreadEntity thread = new AiThreadEntity();
+        thread.setId(UUID.randomUUID());
+        when(companyMemberRepository.existsByCompanyIdAndUserIdAndStatus(companyId, userId, "ACTIVE"))
+                .thenReturn(true);
+        when(aiThreadRepository.findDefaultThread(companyId, userId)).thenReturn(Optional.of(thread));
+
+        aiService.clearHistory(companyId, userId);
+
+        verify(aiMessageRepository).deleteByThreadId(thread.getId());
+    }
+
+    private static AiMessageEntity aiMessage(kz.birchat.api.enums.AiMessageRole role, String content, int minute) {
+        AiMessageEntity message = new AiMessageEntity();
+        message.setId(UUID.randomUUID());
+        message.setRole(role);
+        message.setContent(content);
+        message.setCreatedAt(java.time.LocalDateTime.of(2026, 11, 13, 9, minute));
+        return message;
+    }
 }

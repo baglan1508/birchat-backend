@@ -83,6 +83,10 @@ ai:
     thinking: ${AI_GLM_THINKING:disabled}
     # Модель с «зрением» для описания фото в чате.
     vision-model: ${AI_GLM_VISION_MODEL:glm-4.6v}
+  history:
+    # Диалог с AI начинается заново каждый день (полночь по Алматы); старые вопросы удаляет
+    # ночная чистка (CLEANUP_AI_HISTORY_RETENTION).
+    daily-reset: ${AI_HISTORY_DAILY_RESET:true}
   media:
     # Фоновая обработка фото для AI: описание и текст на фото попадают в сводки и ответы.
     enabled: ${AI_MEDIA_ENABLED:true}
