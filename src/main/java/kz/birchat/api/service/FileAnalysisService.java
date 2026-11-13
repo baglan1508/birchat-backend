@@ -75,6 +75,24 @@ public class FileAnalysisService {
         }
     }
 
+    /**
+     * Во время деплоя Render около двух минут держит старую версию приложения. Голосовое,
+     * отправленное в это время, она не ставила в очередь или помечала «формат не поддерживается».
+     * Через несколько минут после старта (старой версии уже нет) такие голосовые за 3 дня
+     * возвращаются в очередь. Повторный запуск ничего не меняет — новая версия так не помечает.
+     */
+    public int requeueMissedVoices() {
+        Integer count = tx().execute(status -> companyFileRepository.requeueMissedVoices(
+                TimeUtils.utcNow().minusDays(3)
+        ));
+
+        if (count != null && count > 0) {
+            log.info("Voice messages missed during deploy re-queued: {}", count);
+        }
+
+        return count == null ? 0 : count;
+    }
+
     public boolean isEnabled() {
         return aiProperties.getMedia() == null || aiProperties.getMedia().isEnabled();
     }

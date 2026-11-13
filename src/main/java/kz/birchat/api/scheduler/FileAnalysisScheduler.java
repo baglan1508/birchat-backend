@@ -30,4 +30,18 @@ public class FileAnalysisScheduler {
 
         fileAnalysisService.processPending();
     }
+
+    /**
+     * Один раз через 5 минут после старта — когда старая версия приложения уже остановлена —
+     * вернуть в очередь голосовые, которые она пропустила во время деплоя.
+     */
+    @Scheduled(initialDelayString = "PT5M", fixedDelay = Long.MAX_VALUE)
+    @SchedulerLock(name = "fileAiRequeueAfterDeploy", lockAtMostFor = "PT5M")
+    public void requeueAfterDeploy() {
+        LockAssert.assertLocked();
+
+        if (fileAnalysisService.isEnabled()) {
+            fileAnalysisService.requeueMissedVoices();
+        }
+    }
 }
