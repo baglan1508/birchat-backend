@@ -270,6 +270,19 @@ class FileAnalysisServiceTest {
         assertEquals("Расшифровка:\n", FileAnalysisService.voiceHeader(null, 600));
     }
 
+    @Test
+    void voicesMissedDuringDeployAreRequeuedForLastThreeDays() {
+        when(companyFileRepository.requeueMissedVoices(any())).thenReturn(2);
+
+        assertEquals(2, service.requeueMissedVoices());
+
+        org.mockito.ArgumentCaptor<java.time.LocalDateTime> since =
+                org.mockito.ArgumentCaptor.forClass(java.time.LocalDateTime.class);
+        verify(companyFileRepository).requeueMissedVoices(since.capture());
+        long hours = java.time.Duration.between(since.getValue(), kz.birchat.api.util.TimeUtils.utcNow()).toHours();
+        assertTrue(hours >= 71 && hours <= 72, "since = " + since.getValue());
+    }
+
     private CompanyFileEntity pendingFile(String contentType, long size) {
         CompanyFileEntity file = new CompanyFileEntity();
         file.setId(UUID.randomUUID());
