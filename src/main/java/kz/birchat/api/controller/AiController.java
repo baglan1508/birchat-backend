@@ -9,6 +9,7 @@ import kz.birchat.api.service.AiQuotaService;
 import kz.birchat.api.service.AiService;
 import kz.birchat.api.auth.CurrentUser;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
@@ -47,16 +48,32 @@ public class AiController {
         );
     }
 
+    /**
+     * Сегодняшний диалог с AI. order=oldest (по умолчанию) — как в чате, от старых к новым;
+     * order=newest — новые вопросы сверху.
+     */
     @GetMapping("/history")
     public AiHistoryResponse getHistory(
             @PathVariable UUID companyId,
             @CurrentUser UUID userId,
-            @RequestParam(defaultValue = "50") Integer limit
+            @RequestParam(defaultValue = "50") Integer limit,
+            @RequestParam(defaultValue = AiService.HISTORY_ORDER_OLDEST) String order
     ) {
         return aiService.getHistory(
                 companyId,
                 userId,
-                limit
+                limit,
+                order
         );
+    }
+
+    /** «Новый диалог»: удалить свои вопросы и ответы AI в этой компании. */
+    @PostMapping("/history/clear")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void clearHistory(
+            @PathVariable UUID companyId,
+            @CurrentUser UUID userId
+    ) {
+        aiService.clearHistory(companyId, userId);
     }
 }

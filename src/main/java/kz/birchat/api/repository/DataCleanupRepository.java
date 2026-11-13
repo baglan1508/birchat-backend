@@ -74,4 +74,16 @@ public class DataCleanupRepository {
                 )
                 """, cutoff, limit);
     }
+
+    /** Вопросы и ответы диалога с AI старше cutoff. */
+    public int deleteAiMessagesBefore(LocalDateTime cutoff, int limit) {
+        return jdbcTemplate.update("""
+                DELETE FROM birchat.ai_messages
+                WHERE id IN (
+                    SELECT id FROM birchat.ai_messages
+                    WHERE created_at < ?
+                    LIMIT ?
+                )
+                """, cutoff, limit);
+    }
 }
