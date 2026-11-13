@@ -5,14 +5,19 @@ import kz.birchat.api.ai.AiProviderResolver;
 import kz.birchat.api.config.AiProperties;
 import kz.birchat.api.entity.CompanyFileEntity;
 import kz.birchat.api.repository.CompanyFileRepository;
+import kz.birchat.api.service.media.PdfReader;
 import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
@@ -20,8 +25,10 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Фоновая обработка вложений для AI: модель описывает фото (что изображено, главный текст),
- * описание сохраняется в company_files.ai_text и попадает в контекст сводок и вопросов к AI.
+ * Фоновая обработка вложений для AI, результат — в company_files.ai_text, оттуда в контекст
+ * сводок и вопросов к AI:
+ * - фото: модель с «зрением» пишет, что на фото, и переписывает весь текст с него;
+ * - PDF: текст документа (PDFBox); у сканов без текста первые страницы читает модель.
  *
  * Очередь — сами файлы со статусом ai_status = PENDING. Обработка идёт по одному файлу,
  * транзакции короткие: соединение с базой не занято, пока модель смотрит фото.
@@ -43,6 +50,10 @@ public class FileAnalysisService {
 
     /** Форматы, которые принимает модель с «зрением». */
     private static final Set<String> SUPPORTED_IMAGE_TYPES = Set.of("image/jpeg", "image/jpg", "image/png");
+    static final String PDF = "application/pdf";
+    /** У скана PDF модель читает первые страницы. */
+    static final int SCANNED_PDF_PAGES = 2;
+    static final String PDF_TEXT_MODEL = "pdfbox";
 
     private final CompanyFileRepository companyFileRepository;
     private final SupabaseStorageService storageService;
@@ -50,9 +61,10 @@ public class FileAnalysisService {
     private final AiProperties aiProperties;
     private final PlatformTransactionManager transactionManager;
 
-    /** Поставить файл в очередь, если AI умеет его разбирать (сейчас — фото). */
+    /** Поставить файл в очередь, если AI умеет его разбирать: фото и PDF. */
     public static void markForAnalysisIfSupported(CompanyFileEntity file) {
-        if (file.getAiStatus() == null && isImage(file.getContentType())) {
+        if (file.getAiStatus() == null
+                && (isImage(file.getContentType()) || PDF.equals(normalize(file.getContentType())))) {
             file.setAiStatus(AI_PENDING);
         }
     }
@@ -101,29 +113,102 @@ public class FileAnalysisService {
         }
 
         try {
-            String url = storageService
-                    .createSignedUrls(List.of(file.getStorageKey()), SIGNED_URL_TTL_SECONDS)
-                    .get(file.getStorageKey());
-
-            if (url == null || url.isBlank()) {
-                throw new IllegalStateException("Хранилище не выдало ссылку на файл");
-            }
-
-            // Вызов модели — вне транзакции.
-            AiMediaResult result = aiProviderResolver.resolve().describeImage(url);
+            // Вызовы модели и хранилища — вне транзакции.
+            AiMediaResult result = PDF.equals(normalize(file.getContentType()))
+                    ? analyzePdf(file)
+                    : describeImage(file.getStorageKey());
 
             if (result == null || result.text() == null || result.text().isBlank()) {
                 throw new IllegalStateException("Модель вернула пустое описание");
             }
 
             finish(fileId, AI_DONE, result.text().trim(), result.model(), null);
+        } catch (InvalidPasswordException ex) {
+            finish(fileId, AI_SKIPPED, null, null, "PDF защищён паролем");
         } catch (Exception ex) {
             retryOrFail(fileId, ex);
         }
     }
 
+    private AiMediaResult describeImage(String storageKey) {
+        String url = storageService
+                .createSignedUrls(List.of(storageKey), SIGNED_URL_TTL_SECONDS)
+                .get(storageKey);
+
+        if (url == null || url.isBlank()) {
+            throw new IllegalStateException("Хранилище не выдало ссылку на файл");
+        }
+
+        return aiProviderResolver.resolve().describeImage(url);
+    }
+
+    /**
+     * PDF: сначала текст документа. Если текста нет (скан), первые страницы рендерятся в JPEG,
+     * на время кладутся в хранилище рядом с файлом и читаются моделью, затем удаляются.
+     */
+    private AiMediaResult analyzePdf(CompanyFileEntity file) throws IOException {
+        Path pdf = Files.createTempFile("birchat-ai-", ".pdf");
+
+        try {
+            storageService.downloadToFile(file.getStorageKey(), pdf);
+
+            PdfReader.PdfText text = PdfReader.readText(pdf);
+
+            if (!text.scanned()) {
+                return new AiMediaResult(pdfHeader(text.pages(), false) + text.text(), PDF_TEXT_MODEL);
+            }
+
+            List<byte[]> pages = PdfReader.renderPages(pdf, SCANNED_PDF_PAGES);
+            StringBuilder result = new StringBuilder(pdfHeader(text.pages(), true));
+            String model = null;
+
+            for (int i = 0; i < pages.size(); i++) {
+                String pageKey = file.getStorageKey() + ".ai-page-" + (i + 1) + ".jpg";
+
+                try {
+                    storageService.uploadBytes(pageKey, pages.get(i), "image/jpeg");
+                    AiMediaResult page = describeImage(pageKey);
+
+                    if (pages.size() > 1) {
+                        result.append("Страница ").append(i + 1).append(":\n");
+                    }
+
+                    result.append(page.text().trim()).append("\n");
+                    model = page.model();
+                } finally {
+                    deleteQuietly(pageKey);
+                }
+            }
+
+            return new AiMediaResult(result.toString().trim(), model);
+        } finally {
+            Files.deleteIfExists(pdf);
+        }
+    }
+
+    static String pdfHeader(int pages, boolean scanned) {
+        String kind = scanned ? "PDF-скан" : "PDF";
+        String pagesNote = pages > PdfReader.MAX_TEXT_PAGES && !scanned
+                ? pages + " стр., прочитаны первые " + PdfReader.MAX_TEXT_PAGES
+                : pages + " стр.";
+
+        return kind + ", " + pagesNote + ":\n";
+    }
+
+    private void deleteQuietly(String storageKey) {
+        try {
+            storageService.deleteObjects(List.of(storageKey));
+        } catch (Exception ex) {
+            log.warn("Could not delete temporary AI page {}: {}", storageKey, ex.getMessage());
+        }
+    }
+
     static String skipReason(CompanyFileEntity file) {
         String contentType = normalize(file.getContentType());
+
+        if (PDF.equals(contentType)) {
+            return null;
+        }
 
         if (!SUPPORTED_IMAGE_TYPES.contains(contentType)) {
             return "Формат не поддерживается моделью: " + contentType;

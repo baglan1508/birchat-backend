@@ -31,6 +31,7 @@
             Свойство переопределяет версию и flyway-core, и flyway-database-postgresql.
         -->
         <flyway.version>11.20.3</flyway.version>
+        <pdfbox.version>3.0.5</pdfbox.version>
     </properties>
 
     <dependencies>
@@ -80,6 +81,13 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Чтение PDF для AI: текст документа и страницы сканов -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>${pdfbox.version}</version>
+        </dependency>
+
         <!--FlyWay migration -->
         <dependency>
             <groupId>org.flywaydb</groupId>
