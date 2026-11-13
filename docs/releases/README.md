@@ -20,6 +20,7 @@
 | 2026-11-13 | [2026-11-13-11-ai-full-document-text.md](2026-11-13-11-ai-full-document-text.md) | AI читает фото и PDF полностью |
 | 2026-11-13 | [2026-11-13-12-ai-dialog-daily.md](2026-11-13-12-ai-dialog-daily.md) | Диалог с AI каждый день с чистого листа, новые вопросы сверху |
 | 2026-11-14 | [2026-11-14-13-ai-voice-crash-fix.md](2026-11-14-13-ai-voice-crash-fix.md) | Срочно: AI ломался, когда в чате было голосовое |
+| — | [14-ai-voice-transcription.md](14-ai-voice-transcription.md) | AI понимает голосовые: расшифровка (на тесте) |
 
 ## План улучшений архитектуры
 

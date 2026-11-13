@@ -73,6 +73,14 @@ public class MockAiProvider implements AiProvider {
     }
 
     @Override
+    public AiMediaResult transcribeAudio(java.nio.file.Path audioChunk, String previousText) {
+        return new AiMediaResult(
+                "AI mock: тестовая расшифровка (" + audioChunk.getFileName() + ")",
+                MODEL
+        );
+    }
+
+    @Override
     public AiMediaResult describeImage(String imageUrl) {
         return new AiMediaResult(
                 "AI mock: тестовое описание фото (настоящее будет при AI_PROVIDER=glm)",

@@ -71,5 +71,5 @@ feature/... ──PR──▶ develop ──(авто)──▶ staging: про�
 
 `AUTH_JWT_ISSUER`, `AUTH_JWT_ACCESS_TTL_SECONDS` (900), `AUTH_JWT_REFRESH_TTL_DAYS` (30),
 `AUTH_SMS_CODE_TTL_SECONDS` (300), `AUTH_SMS_RESEND_COOLDOWN_SECONDS` (60), `AUTH_SMS_MAX_ATTEMPTS` (5),
-`AI_GLM_*` (в т.ч. `AI_GLM_THINKING` — `disabled`, режим рассуждений GLM выключен; `AI_GLM_VISION_MODEL` — `glm-4.6v`, модель для фото), `AI_MEDIA_ENABLED` (`true`, описания фото), `AI_MEDIA_BATCH_SIZE` (5), `AI_HISTORY_DAILY_RESET` (`true`), `CLEANUP_AI_HISTORY_RETENTION` (`P7D`), `AI_SUMMARY_*`, `CLEANUP_ENABLED`, `CLEANUP_CRON`, `DB_POOL_MAX_SIZE` (5), `DB_POOL_MIN_IDLE` (0),
+`AI_GLM_*` (в т.ч. `AI_GLM_THINKING` — `disabled`, режим рассуждений GLM выключен; `AI_GLM_VISION_MODEL` — `glm-4.6v`, модель для фото), `AI_MEDIA_ENABLED` (`true`, описания фото, PDF и расшифровка голосовых), `AI_MEDIA_BATCH_SIZE` (5), `AI_GLM_ASR_MODEL` (`glm-asr-2512`), `AI_MEDIA_AUDIO_MAX_SECONDS` (600), `AI_HISTORY_DAILY_RESET` (`true`), `CLEANUP_AI_HISTORY_RETENTION` (`P7D`), `AI_SUMMARY_*`, `CLEANUP_ENABLED`, `CLEANUP_CRON`, `DB_POOL_MAX_SIZE` (5), `DB_POOL_MIN_IDLE` (0),
 `SENTRY_ENVIRONMENT` (= `APP_ENVIRONMENT`), `SENTRY_TRACES_SAMPLE_RATE` (0).
