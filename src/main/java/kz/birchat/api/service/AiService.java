@@ -16,6 +16,7 @@ import kz.birchat.api.dto.AiHistoryResponse;
 import kz.birchat.api.entity.AiCompanySummaryEntity;
 import kz.birchat.api.entity.AiMessageEntity;
 import kz.birchat.api.entity.AiThreadEntity;
+import kz.birchat.api.entity.ChatAttachmentEntity;
 import kz.birchat.api.entity.ChatMessageEntity;
 import kz.birchat.api.entity.CompanyEntity;
 import kz.birchat.api.entity.CompanyFileEntity;
@@ -51,6 +52,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -514,7 +517,12 @@ public class AiService {
                 .toList();
     }
 
-    private Map<UUID, String> loadMediaTexts(List<ChatMessageEntity> messages) {
+    /**
+     * У голосового или ещё не обработанного фото текста нет (mediaText → null) — такие вложения
+     * просто пропускаются. Раньше здесь был Map.entry(id, null): он не принимает null,
+     * и любое голосовое в контексте ломало вопросы к AI и сводку (NullPointerException).
+     */
+    Map<UUID, String> loadMediaTexts(List<ChatMessageEntity> messages) {
         List<UUID> withAttachments = messages.stream()
                 .filter(message -> attachmentLabel(message.getType()) != null)
                 .map(ChatMessageEntity::getId)
@@ -524,21 +532,28 @@ public class AiService {
             return Map.of();
         }
 
-        Map<UUID, ChatMessageType> types = messages.stream()
-                .collect(Collectors.toMap(ChatMessageEntity::getId, ChatMessageEntity::getType, (a, b) -> a));
+        Map<UUID, ChatMessageType> types = new HashMap<>();
 
-        return chatAttachmentRepository.findByMessageIds(withAttachments)
-                .stream()
-                .filter(attachment -> attachment.getFile() != null)
-                .map(attachment -> Map.entry(
-                        attachment.getMessage().getId(),
-                        mediaText(types.get(attachment.getMessage().getId()), attachment.getFile())
-                ))
-                .filter(entry -> entry.getValue() != null)
-                .collect(Collectors.groupingBy(
-                        Map.Entry::getKey,
-                        Collectors.mapping(Map.Entry::getValue, Collectors.joining("; "))
-                ));
+        for (ChatMessageEntity message : messages) {
+            types.putIfAbsent(message.getId(), message.getType());
+        }
+
+        Map<UUID, String> texts = new LinkedHashMap<>();
+
+        for (ChatAttachmentEntity attachment : chatAttachmentRepository.findByMessageIds(withAttachments)) {
+            if (attachment.getFile() == null || attachment.getMessage() == null) {
+                continue;
+            }
+
+            UUID messageId = attachment.getMessage().getId();
+            String text = mediaText(types.get(messageId), attachment.getFile());
+
+            if (text != null && !text.isBlank()) {
+                texts.merge(messageId, text, (first, second) -> first + "; " + second);
+            }
+        }
+
+        return texts;
     }
 
     /**
