@@ -102,4 +102,20 @@ public interface CompanyFileRepository extends JpaRepository<CompanyFileEntity, 
             @Param("companyId") UUID companyId,
             @Param("after") java.time.LocalDateTime after
     );
+
+    /**
+     * Голосовые, которые прошли мимо расшифровки во время деплоя: старая версия приложения
+     * не ставила аудио в очередь (ai_status = NULL) или помечала его «формат не поддерживается».
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("""
+        UPDATE CompanyFileEntity f
+        SET f.aiStatus = 'PENDING', f.aiAttempts = 0, f.aiError = NULL, f.aiNextAttemptAt = NULL
+        WHERE f.status = 'READY'
+          AND f.contentType LIKE 'audio/%'
+          AND f.createdAt > :since
+          AND (f.aiStatus IS NULL
+               OR (f.aiStatus = 'SKIPPED' AND f.aiError LIKE 'Формат не поддерживается%'))
+        """)
+    int requeueMissedVoices(@Param("since") java.time.LocalDateTime since);
 }

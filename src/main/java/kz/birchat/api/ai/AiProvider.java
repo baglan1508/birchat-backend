@@ -14,4 +14,11 @@ public interface AiProvider {
      * @param imageUrl временная ссылка на файл в хранилище (модель скачивает фото сама)
      */
     AiMediaResult describeImage(String imageUrl);
+
+    /**
+     * Расшифровка куска голосового (wav, до 30 секунд).
+     *
+     * @param previousText уже расшифрованное начало записи — помогает не терять слова на стыке кусков
+     */
+    AiMediaResult transcribeAudio(java.nio.file.Path audioChunk, String previousText);
 }

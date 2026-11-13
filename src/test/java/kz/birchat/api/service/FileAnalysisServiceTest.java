@@ -6,6 +6,7 @@ import kz.birchat.api.ai.AiProviderResolver;
 import kz.birchat.api.config.AiProperties;
 import kz.birchat.api.entity.CompanyFileEntity;
 import kz.birchat.api.repository.CompanyFileRepository;
+import kz.birchat.api.service.media.AudioConverter;
 import kz.birchat.api.service.media.TestPdfs;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,9 @@ class FileAnalysisServiceTest {
     @Mock
     private PlatformTransactionManager transactionManager;
 
+    @Mock
+    private AudioConverter audioConverter;
+
     private FileAnalysisService service;
 
     @BeforeEach
@@ -57,7 +61,8 @@ class FileAnalysisServiceTest {
                 storageService,
                 aiProviderResolver,
                 new AiProperties(),
-                transactionManager
+                transactionManager,
+                audioConverter
         );
     }
 
@@ -146,14 +151,18 @@ class FileAnalysisServiceTest {
         pdf.setContentType("application/pdf");
         CompanyFileEntity docx = new CompanyFileEntity();
         docx.setContentType("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        CompanyFileEntity voice = new CompanyFileEntity();
+        voice.setContentType("audio/m4a");
 
         FileAnalysisService.markForAnalysisIfSupported(photo);
         FileAnalysisService.markForAnalysisIfSupported(pdf);
         FileAnalysisService.markForAnalysisIfSupported(docx);
+        FileAnalysisService.markForAnalysisIfSupported(voice);
 
         assertEquals(FileAnalysisService.AI_PENDING, photo.getAiStatus());
         assertEquals(FileAnalysisService.AI_PENDING, pdf.getAiStatus());
         assertNull(docx.getAiStatus());
+        assertEquals(FileAnalysisService.AI_PENDING, voice.getAiStatus());
     }
 
     @Test
@@ -203,6 +212,75 @@ class FileAnalysisServiceTest {
 
         assertEquals(0, service.processPending());
         verifyNoInteractions(aiProviderResolver, storageService);
+    }
+
+    @Test
+    void voiceIsTranscribedChunkByChunkWithPreviousTextAsHint() throws Exception {
+        CompanyFileEntity voice = pendingFile("audio/m4a", 400_000L);
+        when(companyFileRepository.findById(voice.getId())).thenReturn(Optional.of(voice));
+        when(audioConverter.durationSeconds(any(Path.class))).thenReturn(52.0);
+        Path first = Path.of("chunk_000.wav");
+        Path second = Path.of("chunk_001.wav");
+        when(audioConverter.toWavChunks(any(Path.class), any(Path.class), eq(600))).thenReturn(List.of(first, second));
+        when(aiProviderResolver.resolve()).thenReturn(aiProvider);
+        when(aiProvider.transcribeAudio(first, "")).thenReturn(new AiMediaResult("Ребята, завтра в 10 планёрка.", "glm-asr-2512"));
+        when(aiProvider.transcribeAudio(second, "Ребята, завтра в 10 планёрка."))
+                .thenReturn(new AiMediaResult("Возьмите отчёты по складу.", "glm-asr-2512"));
+
+        service.process(voice.getId());
+
+        assertEquals(FileAnalysisService.AI_DONE, voice.getAiStatus());
+        assertEquals("Расшифровка (0:52):\nРебята, завтра в 10 планёрка. Возьмите отчёты по складу.", voice.getAiText());
+        assertEquals("glm-asr-2512", voice.getAiModel());
+        verify(storageService).downloadToFile(eq(KEY), any(Path.class));
+    }
+
+    @Test
+    void silenceIsDoneNotRetried() throws Exception {
+        CompanyFileEntity voice = pendingFile("audio/aac", 20_000L);
+        when(companyFileRepository.findById(voice.getId())).thenReturn(Optional.of(voice));
+        when(audioConverter.durationSeconds(any(Path.class))).thenReturn(3.0);
+        when(audioConverter.toWavChunks(any(Path.class), any(Path.class), eq(600))).thenReturn(List.of(Path.of("chunk_000.wav")));
+        when(aiProviderResolver.resolve()).thenReturn(aiProvider);
+        when(aiProvider.transcribeAudio(any(Path.class), eq(""))).thenReturn(new AiMediaResult("", "glm-asr-2512"));
+
+        service.process(voice.getId());
+
+        assertEquals(FileAnalysisService.AI_DONE, voice.getAiStatus());
+        assertEquals("Расшифровка (0:03):\nречь не распознана", voice.getAiText());
+    }
+
+    @Test
+    void voiceIsSkippedWhenFfmpegIsMissing() throws Exception {
+        CompanyFileEntity voice = pendingFile("audio/m4a", 20_000L);
+        when(companyFileRepository.findById(voice.getId())).thenReturn(Optional.of(voice));
+        when(audioConverter.durationSeconds(any(Path.class)))
+                .thenThrow(new AudioConverter.ToolMissingException("ffprobe не установлен", null));
+
+        service.process(voice.getId());
+
+        assertEquals(FileAnalysisService.AI_SKIPPED, voice.getAiStatus());
+        assertEquals("ffprobe не установлен", voice.getAiError());
+        verifyNoInteractions(aiProviderResolver);
+    }
+
+    @Test
+    void longVoiceHeaderSaysOnlyBeginningWasTranscribed() {
+        assertEquals("Расшифровка (12:05, расшифрованы первые 10:00):\n", FileAnalysisService.voiceHeader(725.0, 600));
+        assertEquals("Расшифровка:\n", FileAnalysisService.voiceHeader(null, 600));
+    }
+
+    @Test
+    void voicesMissedDuringDeployAreRequeuedForLastThreeDays() {
+        when(companyFileRepository.requeueMissedVoices(any())).thenReturn(2);
+
+        assertEquals(2, service.requeueMissedVoices());
+
+        org.mockito.ArgumentCaptor<java.time.LocalDateTime> since =
+                org.mockito.ArgumentCaptor.forClass(java.time.LocalDateTime.class);
+        verify(companyFileRepository).requeueMissedVoices(since.capture());
+        long hours = java.time.Duration.between(since.getValue(), kz.birchat.api.util.TimeUtils.utcNow()).toHours();
+        assertTrue(hours >= 71 && hours <= 72, "since = " + since.getValue());
     }
 
     private CompanyFileEntity pendingFile(String contentType, long size) {

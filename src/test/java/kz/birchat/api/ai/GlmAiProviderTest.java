@@ -86,4 +86,28 @@ class GlmAiProviderTest {
         assertTrue(json.contains("\"max_tokens\":2500"), json);
         assertTrue(json.contains("\"thinking\":{\"type\":\"disabled\"}"), json);
     }
+
+    @Test
+    void transcriptionFormCarriesFileModelAndTailOfPreviousText() {
+        java.nio.file.Path chunk = java.nio.file.Path.of("chunk_001.wav");
+        String previous = "а".repeat(2500) + "конец";
+
+        org.springframework.util.MultiValueMap<String, Object> form =
+                GlmAiProvider.transcriptionForm("glm-asr-2512", chunk, previous);
+
+        assertEquals("glm-asr-2512", form.getFirst("model"));
+        assertEquals("false", form.getFirst("stream"));
+        assertTrue(form.getFirst("file") instanceof org.springframework.core.io.FileSystemResource);
+        String prompt = (String) form.getFirst("prompt");
+        assertEquals(2000, prompt.length());
+        assertTrue(prompt.endsWith("конец"));
+    }
+
+    @Test
+    void firstChunkHasNoPrompt() {
+        org.springframework.util.MultiValueMap<String, Object> form =
+                GlmAiProvider.transcriptionForm("glm-asr-2512", java.nio.file.Path.of("chunk_000.wav"), "");
+
+        assertNull(form.getFirst("prompt"));
+    }
 }

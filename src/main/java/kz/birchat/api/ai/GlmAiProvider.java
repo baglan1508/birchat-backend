@@ -7,11 +7,16 @@ import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import java.nio.file.Path;
 import java.time.Duration;
 
 import java.util.ArrayList;
@@ -26,6 +31,9 @@ public class GlmAiProvider implements AiProvider {
     private static final String CODE = "glm";
 
     static final String DEFAULT_VISION_MODEL = "glm-4.6v";
+    static final String DEFAULT_ASR_MODEL = "glm-asr-2512";
+    /** Подсказка для распознавания — конец уже расшифрованного текста (сервис советует до 8000 символов). */
+    private static final int ASR_PROMPT_CHARS = 2000;
     /** Хватает на чек или накладную на несколько десятков позиций. */
     private static final int VISION_MAX_TOKENS = 2500;
     private static final int MAX_MEDIA_TEXT_LENGTH = 8000;
@@ -216,20 +224,79 @@ public class GlmAiProvider implements AiProvider {
         return new GlmThinking(value.trim());
     }
 
-    private GlmAnswer sendChatRequest(
-            AiProperties.Glm glm,
-            Object body
-    ) {
+    /**
+     * Распознавание речи GLM-ASR (AI_GLM_ASR_MODEL): кусок wav до 30 секунд, multipart.
+     */
+    @Override
+    public AiMediaResult transcribeAudio(Path audioChunk, String previousText) {
+        AiProperties.Glm glm = aiProperties.getGlm();
+
+        validateConfig(glm);
+
+        String model = isBlankStatic(glm.getAsrModel()) ? DEFAULT_ASR_MODEL : glm.getAsrModel().trim();
+
+        try {
+            GlmTranscriptionResponse response = restClient(glm)
+                    .post()
+                    .uri("/audio/transcriptions")
+                    .header("Authorization", "Bearer " + glm.getApiKey())
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(transcriptionForm(model, audioChunk, previousText))
+                    .retrieve()
+                    .body(GlmTranscriptionResponse.class);
+
+            String text = response == null || response.text() == null ? "" : response.text().trim();
+
+            return new AiMediaResult(text, model);
+        } catch (RestClientResponseException ex) {
+            log.warn(
+                    "GLM transcription failed. status={} body={}",
+                    ex.getStatusCode().value(),
+                    limit(ex.getResponseBodyAsString(), 300)
+            );
+
+            throw new ApiException(
+                    HttpStatus.BAD_GATEWAY,
+                    ApiErrorCode.INTERNAL_ERROR,
+                    "Распознавание речи временно недоступно"
+            );
+        }
+    }
+
+    static MultiValueMap<String, Object> transcriptionForm(String model, Path audioChunk, String previousText) {
+        MultiValueMap<String, Object> form = new LinkedMultiValueMap<>();
+        form.add("model", model);
+        form.add("stream", "false");
+        form.add("file", new FileSystemResource(audioChunk));
+
+        if (previousText != null && !previousText.isBlank()) {
+            String prompt = previousText.trim();
+            form.add("prompt", prompt.length() <= ASR_PROMPT_CHARS
+                    ? prompt
+                    : prompt.substring(prompt.length() - ASR_PROMPT_CHARS));
+        }
+
+        return form;
+    }
+
+    private RestClient restClient(AiProperties.Glm glm) {
         SimpleClientHttpRequestFactory requestFactory =
                 new SimpleClientHttpRequestFactory();
 
         requestFactory.setConnectTimeout(Duration.ofSeconds(5));
         requestFactory.setReadTimeout(Duration.ofSeconds(60));
 
-        RestClient restClient = restClientBuilder.clone()
+        return restClientBuilder.clone()
                 .requestFactory(requestFactory)
                 .baseUrl(normalizeBaseUrl(glm.getBaseUrl()))
                 .build();
+    }
+
+    private GlmAnswer sendChatRequest(
+            AiProperties.Glm glm,
+            Object body
+    ) {
+        RestClient restClient = restClient(glm);
 
         try {
             GlmChatResponse response = restClient
@@ -600,6 +667,9 @@ public class GlmAiProvider implements AiProvider {
     }
 
     record GlmImageUrl(String url) {
+    }
+
+    record GlmTranscriptionResponse(String text) {
     }
 
     /** Ответ модели: текст, причина остановки (length — упёрлись в max_tokens) и расход токенов. */

@@ -5,6 +5,7 @@ import kz.birchat.api.ai.AiProviderResolver;
 import kz.birchat.api.config.AiProperties;
 import kz.birchat.api.entity.CompanyFileEntity;
 import kz.birchat.api.repository.CompanyFileRepository;
+import kz.birchat.api.service.media.AudioConverter;
 import kz.birchat.api.service.media.PdfReader;
 import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +29,8 @@ import java.util.UUID;
  * Фоновая обработка вложений для AI, результат — в company_files.ai_text, оттуда в контекст
  * сводок и вопросов к AI:
  * - фото: модель с «зрением» пишет, что на фото, и переписывает весь текст с него;
- * - PDF: текст документа (PDFBox); у сканов без текста первые страницы читает модель.
+ * - PDF: текст документа (PDFBox); у сканов без текста первые страницы читает модель;
+ * - голосовые: ffmpeg режет запись на куски по 25 секунд, их расшифровывает распознавание речи.
  *
  * Очередь — сами файлы со статусом ai_status = PENDING. Обработка идёт по одному файлу,
  * транзакции короткие: соединение с базой не занято, пока модель смотрит фото.
@@ -54,19 +56,41 @@ public class FileAnalysisService {
     /** У скана PDF модель читает первые страницы. */
     static final int SCANNED_PDF_PAGES = 2;
     static final String PDF_TEXT_MODEL = "pdfbox";
+    static final String AUDIO_PREFIX = "audio/";
 
     private final CompanyFileRepository companyFileRepository;
     private final SupabaseStorageService storageService;
     private final AiProviderResolver aiProviderResolver;
     private final AiProperties aiProperties;
     private final PlatformTransactionManager transactionManager;
+    private final AudioConverter audioConverter;
 
-    /** Поставить файл в очередь, если AI умеет его разбирать: фото и PDF. */
+    /** Поставить файл в очередь, если AI умеет его разбирать: фото, PDF и голосовые. */
     public static void markForAnalysisIfSupported(CompanyFileEntity file) {
+        String contentType = normalize(file.getContentType());
+
         if (file.getAiStatus() == null
-                && (isImage(file.getContentType()) || PDF.equals(normalize(file.getContentType())))) {
+                && (isImage(contentType) || PDF.equals(contentType) || contentType.startsWith(AUDIO_PREFIX))) {
             file.setAiStatus(AI_PENDING);
         }
+    }
+
+    /**
+     * Во время деплоя Render около двух минут держит старую версию приложения. Голосовое,
+     * отправленное в это время, она не ставила в очередь или помечала «формат не поддерживается».
+     * Через несколько минут после старта (старой версии уже нет) такие голосовые за 3 дня
+     * возвращаются в очередь. Повторный запуск ничего не меняет — новая версия так не помечает.
+     */
+    public int requeueMissedVoices() {
+        Integer count = tx().execute(status -> companyFileRepository.requeueMissedVoices(
+                TimeUtils.utcNow().minusDays(3)
+        ));
+
+        if (count != null && count > 0) {
+            log.info("Voice messages missed during deploy re-queued: {}", count);
+        }
+
+        return count == null ? 0 : count;
     }
 
     public boolean isEnabled() {
@@ -114,9 +138,16 @@ public class FileAnalysisService {
 
         try {
             // Вызовы модели и хранилища — вне транзакции.
-            AiMediaResult result = PDF.equals(normalize(file.getContentType()))
-                    ? analyzePdf(file)
-                    : describeImage(file.getStorageKey());
+            String contentType = normalize(file.getContentType());
+            AiMediaResult result;
+
+            if (PDF.equals(contentType)) {
+                result = analyzePdf(file);
+            } else if (contentType.startsWith(AUDIO_PREFIX)) {
+                result = transcribe(file);
+            } else {
+                result = describeImage(file.getStorageKey());
+            }
 
             if (result == null || result.text() == null || result.text().isBlank()) {
                 throw new IllegalStateException("Модель вернула пустое описание");
@@ -125,6 +156,8 @@ public class FileAnalysisService {
             finish(fileId, AI_DONE, result.text().trim(), result.model(), null);
         } catch (InvalidPasswordException ex) {
             finish(fileId, AI_SKIPPED, null, null, "PDF защищён паролем");
+        } catch (AudioConverter.ToolMissingException ex) {
+            finish(fileId, AI_SKIPPED, null, null, ex.getMessage());
         } catch (Exception ex) {
             retryOrFail(fileId, ex);
         }
@@ -186,6 +219,85 @@ public class FileAnalysisService {
         }
     }
 
+    /**
+     * Голосовое: скачать во временную папку, нарезать ffmpeg'ом на куски по 25 секунд и расшифровать
+     * по очереди. Каждому куску передаётся уже расшифрованное начало — слова на стыке не теряются.
+     */
+    private AiMediaResult transcribe(CompanyFileEntity file) throws IOException {
+        Path workDir = Files.createTempDirectory("birchat-voice-");
+
+        try {
+            Path audio = workDir.resolve("source");
+            storageService.downloadToFile(file.getStorageKey(), audio);
+
+            int maxSeconds = audioMaxSeconds();
+            Double duration = audioConverter.durationSeconds(audio);
+            List<Path> chunks = audioConverter.toWavChunks(
+                    audio,
+                    Files.createDirectory(workDir.resolve("chunks")),
+                    maxSeconds
+            );
+
+            StringBuilder text = new StringBuilder();
+            String model = null;
+
+            for (Path chunk : chunks) {
+                AiMediaResult part = aiProviderResolver.resolve().transcribeAudio(chunk, text.toString());
+                model = part.model();
+
+                if (part.text() != null && !part.text().isBlank()) {
+                    if (!text.isEmpty()) {
+                        text.append(' ');
+                    }
+
+                    text.append(part.text().trim());
+                }
+            }
+
+            String body = text.isEmpty() ? "речь не распознана" : text.toString();
+
+            return new AiMediaResult(voiceHeader(duration, maxSeconds) + body, model);
+        } finally {
+            deleteRecursively(workDir);
+        }
+    }
+
+    static String voiceHeader(Double seconds, int maxSeconds) {
+        if (seconds == null) {
+            return "Расшифровка:\n";
+        }
+
+        String cut = seconds > maxSeconds ? ", расшифрованы первые " + formatDuration(maxSeconds) : "";
+
+        return "Расшифровка (" + formatDuration(seconds) + cut + "):\n";
+    }
+
+    static String formatDuration(double seconds) {
+        long total = Math.round(seconds);
+
+        return (total / 60) + ":" + String.format(Locale.ROOT, "%02d", total % 60);
+    }
+
+    private int audioMaxSeconds() {
+        int value = aiProperties.getMedia() == null ? 600 : aiProperties.getMedia().getAudioMaxSeconds();
+
+        return value > 0 ? value : 600;
+    }
+
+    private static void deleteRecursively(Path dir) {
+        try (var paths = Files.walk(dir)) {
+            paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                    // временные файлы — не страшно, если что-то останется
+                }
+            });
+        } catch (IOException ignored) {
+            // папки уже нет
+        }
+    }
+
     static String pdfHeader(int pages, boolean scanned) {
         String kind = scanned ? "PDF-скан" : "PDF";
         String pagesNote = pages > PdfReader.MAX_TEXT_PAGES && !scanned
@@ -206,7 +318,7 @@ public class FileAnalysisService {
     static String skipReason(CompanyFileEntity file) {
         String contentType = normalize(file.getContentType());
 
-        if (PDF.equals(contentType)) {
+        if (PDF.equals(contentType) || contentType.startsWith(AUDIO_PREFIX)) {
             return null;
         }
 

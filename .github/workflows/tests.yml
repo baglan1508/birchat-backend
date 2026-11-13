@@ -46,6 +46,10 @@ jobs:
           java-version: '21'
           cache: maven
 
+      # ffmpeg — для теста нарезки голосовых (на Render он ставится в Docker-образе)
+      - name: Install ffmpeg
+        run: command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg)
+
       - name: Run tests
         run: mvn -B -ntp test
         env:

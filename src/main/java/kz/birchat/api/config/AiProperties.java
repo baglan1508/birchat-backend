@@ -32,6 +32,8 @@ public class AiProperties {
         private boolean enabled = true;
         /** Сколько файлов обрабатывать за один проход. */
         private int batchSize = 5;
+        /** Голосовое длиннее — расшифровываются только первые столько секунд. */
+        private int audioMaxSeconds = 600;
     }
 
     @Getter
@@ -46,6 +48,8 @@ public class AiProperties {
         private String thinking = "disabled";
         /** Модель с «зрением» для описания фото. */
         private String visionModel = "glm-4.6v";
+        /** Распознавание речи для голосовых. */
+        private String asrModel = "glm-asr-2512";
     }
     @Getter
     @Setter
