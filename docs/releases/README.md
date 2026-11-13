@@ -19,7 +19,7 @@
 | 2026-11-12 | [2026-11-12-10-ai-photo-descriptions.md](2026-11-12-10-ai-photo-descriptions.md) | AI понимает, что на фото |
 | 2026-11-13 | [2026-11-13-11-ai-full-document-text.md](2026-11-13-11-ai-full-document-text.md) | AI читает фото и PDF полностью |
 | 2026-11-13 | [2026-11-13-12-ai-dialog-daily.md](2026-11-13-12-ai-dialog-daily.md) | Диалог с AI каждый день с чистого листа, новые вопросы сверху |
-| — | [13-ai-voice-crash-fix.md](13-ai-voice-crash-fix.md) | Срочно: AI ломался, когда в чате было голосовое |
+| 2026-11-14 | [2026-11-14-13-ai-voice-crash-fix.md](2026-11-14-13-ai-voice-crash-fix.md) | Срочно: AI ломался, когда в чате было голосовое |
 
 ## План улучшений архитектуры
 
