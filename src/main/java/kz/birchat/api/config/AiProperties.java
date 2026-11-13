@@ -15,6 +15,15 @@ public class AiProperties {
     private Summary summary = new Summary();
     private Glm glm = new Glm();
     private Media media = new Media();
+    private History history = new History();
+
+    /** Диалог с AI на экране. */
+    @Getter
+    @Setter
+    public static class History {
+        /** Показывать только сегодняшний диалог (день — по ai.summary.zone, Алматы). */
+        private boolean dailyReset = true;
+    }
 
     /** Фоновая обработка вложений для AI (описания фото). */
     @Getter

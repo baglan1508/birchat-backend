@@ -19,10 +19,11 @@ import java.util.Map;
 import java.util.function.IntUnaryOperator;
 
 /**
- * Ночная чистка служебных данных, которые иначе копятся бесконечно:
- * окна AI-квот, истёкшие/отозванные refresh-токены, старые коды входа.
+ * Ночная чистка данных, которые иначе копятся бесконечно:
+ * окна AI-квот, истёкшие/отозванные refresh-токены, старые коды входа, недозагруженные файлы
+ * и старые вопросы к AI (диалог на экране и так начинается заново каждый день).
  *
- * Пользовательские данные (сообщения, файлы, история AI, сводки) не трогаются.
+ * Сообщения чатов, файлы и сводки не трогаются.
  */
 @Slf4j
 @Service
@@ -34,6 +35,8 @@ public class DataCleanupService {
     static final Duration DEFAULT_REFRESH_TOKEN_RETENTION = Duration.ofDays(7);
     static final Duration DEFAULT_AUTH_CODE_RETENTION = Duration.ofDays(7);
     static final Duration DEFAULT_PENDING_FILE_RETENTION = Duration.ofDays(1);
+    /** Неделя — чтобы можно было разобраться, если пожалуются на вчерашний ответ AI. */
+    static final Duration DEFAULT_AI_HISTORY_RETENTION = Duration.ofDays(7);
     static final int PENDING_FILES_BATCH_SIZE = 100;
     static final int DEFAULT_BATCH_SIZE = 1000;
 
@@ -77,6 +80,9 @@ public class DataCleanupService {
 
         report.put("pendingFiles", run("pendingFiles", limit ->
                 deleteStalePendingFiles(now.minus(pendingFileRetention()), limit), PENDING_FILES_BATCH_SIZE));
+
+        report.put("aiHistory", run("aiHistory", limit ->
+                repository.deleteAiMessagesBefore(now.minus(aiHistoryRetention()), limit), batch));
 
         log.info("Data cleanup finished: {}", report);
 
@@ -123,6 +129,10 @@ public class DataCleanupService {
         companyFileRepository.deleteAllInBatch(files);
 
         return files.size();
+    }
+
+    private Duration aiHistoryRetention() {
+        return orDefault(properties == null ? null : properties.aiHistoryRetention(), DEFAULT_AI_HISTORY_RETENTION);
     }
 
     private Duration pendingFileRetention() {
