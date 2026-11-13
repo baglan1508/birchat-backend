@@ -387,4 +387,51 @@ class AiServiceTest {
         message.setCreatedAt(java.time.LocalDateTime.of(2026, 11, 13, 9, minute));
         return message;
     }
+
+    @Test
+    void voiceAndUnprocessedPhotoDoNotBreakAiContext() {
+        // Регрессия: голосовое (текста нет) давало Map.entry(id, null) → NullPointerException
+        // в вопросах к AI и в сводке.
+        ChatMessageEntity voice = typedMessage(ChatMessageType.VOICE);
+        ChatMessageEntity photo = typedMessage(ChatMessageType.IMAGE);
+        ChatMessageEntity receipt = typedMessage(ChatMessageType.DOCUMENT);
+
+        kz.birchat.api.entity.CompanyFileEntity voiceFile = new kz.birchat.api.entity.CompanyFileEntity();
+        voiceFile.setOriginalFileName("voice.m4a");
+        kz.birchat.api.entity.CompanyFileEntity photoFile = new kz.birchat.api.entity.CompanyFileEntity();
+        photoFile.setAiStatus(FileAnalysisService.AI_PENDING);
+        kz.birchat.api.entity.CompanyFileEntity receiptFile = new kz.birchat.api.entity.CompanyFileEntity();
+        receiptFile.setOriginalFileName("Чек.pdf");
+        receiptFile.setAiStatus(FileAnalysisService.AI_DONE);
+        receiptFile.setAiText("PDF, 1 стр.: Итого 1 150 тг");
+
+        when(chatAttachmentRepository.findByMessageIds(any())).thenReturn(List.of(
+                attachment(voice, voiceFile),
+                attachment(photo, photoFile),
+                attachment(receipt, receiptFile)
+        ));
+
+        java.util.Map<UUID, String> texts = aiService.loadMediaTexts(List.of(voice, photo, receipt));
+
+        assertEquals(java.util.Map.of(receipt.getId(), "«Чек.pdf» — PDF, 1 стр.: Итого 1 150 тг"), texts);
+        assertEquals("[голосовое сообщение]", AiService.aiContent(voice, texts.get(voice.getId())));
+    }
+
+    private static ChatMessageEntity typedMessage(ChatMessageType type) {
+        ChatMessageEntity message = new ChatMessageEntity();
+        message.setId(UUID.randomUUID());
+        message.setType(type);
+        message.setContent("");
+        return message;
+    }
+
+    private static kz.birchat.api.entity.ChatAttachmentEntity attachment(
+            ChatMessageEntity message,
+            kz.birchat.api.entity.CompanyFileEntity file
+    ) {
+        kz.birchat.api.entity.ChatAttachmentEntity attachment = new kz.birchat.api.entity.ChatAttachmentEntity();
+        attachment.setMessage(message);
+        attachment.setFile(file);
+        return attachment;
+    }
 }
