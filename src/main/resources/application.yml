@@ -42,3 +42,12 @@ sentry:
   logging:
     minimum-event-level: error
     minimum-breadcrumb-level: info
+
+# Push-уведомления (APNs). Пока APNS_KEY_ID и APNS_PRIVATE_KEY не заданы, пуши не отправляются.
+push:
+  apns:
+    key-id: ${APNS_KEY_ID:}
+    team-id: ${APNS_TEAM_ID:S59B8XNQ5Z}
+    bundle-id: ${APNS_BUNDLE_ID:kz.birchat.app}
+    # Содержимое файла AuthKey_XXXXXXXXXX.p8 целиком
+    private-key: ${APNS_PRIVATE_KEY:}

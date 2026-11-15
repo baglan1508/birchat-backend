@@ -135,7 +135,7 @@ public class ChatMessageActionsService {
     }
 
     /** Кто сейчас в чате: общий — все активные сотрудники; группа — участники и директор. */
-    private Set<UUID> recipients(UUID companyId, ChatEntity chat) {
+    public Set<UUID> recipients(UUID companyId, ChatEntity chat) {
         List<CompanyMemberEntity> active = companyMemberRepository
                 .findByCompanyIdAndStatusOrderByJoinedAtAsc(companyId, "ACTIVE");
         Set<UUID> result = new HashSet<>();

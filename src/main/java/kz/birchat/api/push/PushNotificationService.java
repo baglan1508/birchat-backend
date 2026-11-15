@@ -1,0 +1,238 @@
+package kz.birchat.api.push;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PreDestroy;
+import kz.birchat.api.dto.ChatSummaryResponse;
+import kz.birchat.api.entity.ChatAttachmentEntity;
+import kz.birchat.api.entity.ChatEntity;
+import kz.birchat.api.entity.ChatMessageEntity;
+import kz.birchat.api.entity.CompanyMemberEntity;
+import kz.birchat.api.repository.ChatAttachmentRepository;
+import kz.birchat.api.repository.ChatMessageRepository;
+import kz.birchat.api.repository.CompanyMemberRepository;
+import kz.birchat.api.service.ChatAccessService;
+import kz.birchat.api.service.ChatManagementService;
+import kz.birchat.api.service.ChatMessageActionsService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Push-уведомления о новых сообщениях.
+ *
+ * Отправка идёт в фоне, после того как сообщение сохранено: отправитель сообщения не ждёт Apple,
+ * и сбой пушей не мешает отправке сообщения.
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class PushNotificationService {
+
+    private final PushSender pushSender;
+    private final DeviceTokenRepository deviceTokenRepository;
+    private final ChatPresenceTracker presenceTracker;
+    private final ChatMessageRepository chatMessageRepository;
+    private final ChatAttachmentRepository chatAttachmentRepository;
+    private final CompanyMemberRepository companyMemberRepository;
+    private final ChatMessageActionsService chatMessageActionsService;
+    private final ChatManagementService chatManagementService;
+    private final PlatformTransactionManager transactionManager;
+    private final ObjectMapper objectMapper;
+
+    /** Два потока и очередь на 500 сообщений; если очередь переполнена, пуш пропускается. */
+    private final ExecutorService executor = new ThreadPoolExecutor(
+            2, 2, 0L, TimeUnit.MILLISECONDS,
+            new LinkedBlockingQueue<>(500),
+            runnable -> {
+                Thread thread = new Thread(runnable, "push-sender");
+                thread.setDaemon(true);
+                return thread;
+            },
+            (task, pool) -> log.warn("Push queue is full, a notification was skipped")
+    );
+
+    record Outgoing(String deviceToken, String environment, String payloadJson) {
+    }
+
+    /** Вызывается после сохранения сообщения. Ничего не бросает. */
+    public void messageCreated(UUID messageId) {
+        if (messageId == null || !pushSender.isConfigured()) {
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                deliver(messageId);
+            } catch (Exception ex) {
+                log.error("Push delivery failed. messageId={}", messageId, ex);
+            }
+        });
+    }
+
+    void deliver(UUID messageId) {
+        TransactionTemplate readTx = new TransactionTemplate(transactionManager);
+        readTx.setReadOnly(true);
+
+        List<Outgoing> notifications = readTx.execute(status -> prepare(messageId));
+
+        if (notifications == null || notifications.isEmpty()) {
+            return;
+        }
+
+        List<String> invalidTokens = new ArrayList<>();
+
+        // Отправка — вне транзакции: соединение с базой не занято, пока отвечает Apple.
+        for (Outgoing notification : notifications) {
+            PushSender.Result result = pushSender.send(
+                    notification.deviceToken(),
+                    notification.environment(),
+                    notification.payloadJson()
+            );
+
+            if (result == PushSender.Result.INVALID_TOKEN) {
+                invalidTokens.add(notification.deviceToken());
+            }
+        }
+
+        if (!invalidTokens.isEmpty()) {
+            new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                    invalidTokens.forEach(deviceTokenRepository::deleteByTokenValue));
+            log.info("Removed {} device tokens rejected by APNs", invalidTokens.size());
+        }
+    }
+
+    /** Кому и что отправить: участники чата, кроме автора и тех, у кого чат сейчас открыт. */
+    List<Outgoing> prepare(UUID messageId) {
+        ChatMessageEntity message = chatMessageRepository.findAllWithUserAndChatByIdIn(List.of(messageId))
+                .stream()
+                .findFirst()
+                .orElse(null);
+
+        if (message == null || Boolean.TRUE.equals(message.getIsDeleted())) {
+            return List.of();
+        }
+
+        ChatEntity chat = message.getChat();
+        UUID companyId = chat.getCompany().getId();
+        UUID authorId = message.getUser().getId();
+        boolean general = ChatAccessService.isGeneral(chat);
+
+        Set<UUID> recipients = chatMessageActionsService.recipients(companyId, chat);
+        recipients.remove(authorId);
+        recipients.removeIf(userId -> presenceTracker.isInChat(userId, chat.getId(), general ? companyId : null));
+
+        if (recipients.isEmpty()) {
+            return List.of();
+        }
+
+        List<DeviceTokenEntity> devices = deviceTokenRepository.findByUserIdIn(recipients);
+
+        if (devices.isEmpty()) {
+            return List.of();
+        }
+
+        String fileName = chatAttachmentRepository.findByMessageIds(List.of(messageId))
+                .stream()
+                .map(ChatAttachmentEntity::getFile)
+                .filter(file -> file != null)
+                .map(file -> file.getOriginalFileName())
+                .findFirst()
+                .orElse(null);
+
+        String companyName = chat.getCompany().getName();
+        String authorName = message.getUser().getDisplayName();
+        Map<UUID, Integer> badges = new HashMap<>();
+        List<Outgoing> result = new ArrayList<>();
+
+        for (DeviceTokenEntity device : devices) {
+            int badge = badges.computeIfAbsent(device.getUserId(), this::unreadTotal);
+            String body = PushTextBuilder.body(authorName, message.getType(), message.getContent(), fileName, device.getLocale());
+
+            result.add(new Outgoing(
+                    device.getToken(),
+                    device.getEnvironment(),
+                    toJson(payload(companyName, general ? null : chat.getName(), body, badge,
+                            companyId, chat.getId(), messageId))
+            ));
+        }
+
+        return result;
+    }
+
+    /** Цифра на иконке: непрочитанные по всем чатам всех компаний пользователя. */
+    int unreadTotal(UUID userId) {
+        long total = 0;
+
+        for (CompanyMemberEntity membership : companyMemberRepository.findByUserIdAndStatus(userId, "ACTIVE")) {
+            for (ChatSummaryResponse chat : chatManagementService.getChats(membership.getCompany().getId(), userId)) {
+                total += chat.unreadCount() == null ? 0 : chat.unreadCount();
+            }
+        }
+
+        return (int) Math.min(total, 9999);
+    }
+
+    /**
+     * title — компания, subtitle — группа (у общего чата нет), thread-id — чат (iOS группирует по чатам);
+     * companyId, chatId, messageId — чтобы приложение открыло нужный чат по нажатию.
+     */
+    static Map<String, Object> payload(
+            String companyName,
+            String groupName,
+            String body,
+            int badge,
+            UUID companyId,
+            UUID chatId,
+            UUID messageId
+    ) {
+        Map<String, Object> alert = new LinkedHashMap<>();
+        alert.put("title", companyName);
+
+        if (groupName != null && !groupName.isBlank()) {
+            alert.put("subtitle", groupName);
+        }
+
+        alert.put("body", body);
+
+        Map<String, Object> aps = new LinkedHashMap<>();
+        aps.put("alert", alert);
+        aps.put("badge", badge);
+        aps.put("sound", "default");
+        aps.put("thread-id", chatId.toString());
+
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("aps", aps);
+        root.put("companyId", companyId.toString());
+        root.put("chatId", chatId.toString());
+        root.put("messageId", messageId.toString());
+
+        return root;
+    }
+
+    private String toJson(Map<String, Object> payload) {
+        try {
+            return objectMapper.writeValueAsString(payload);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Cannot build push payload", ex);
+        }
+    }
+
+    @PreDestroy
+    void shutdown() {
+        executor.shutdown();
+    }
+}
