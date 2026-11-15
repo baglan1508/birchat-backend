@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import kz.birchat.api.auth.CurrentUser;
 import kz.birchat.api.dto.*;
 import kz.birchat.api.service.ChatManagementService;
+import kz.birchat.api.service.ChatMessageActionsService;
 import kz.birchat.api.service.ChatService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -19,6 +20,7 @@ public class ChatController {
 
     private final ChatService chatService;
     private final ChatManagementService chatManagementService;
+    private final ChatMessageActionsService chatMessageActionsService;
 
     // ---- список чатов и групповые чаты ----
 
@@ -47,6 +49,17 @@ public class ChatController {
             @CurrentUser UUID userId
     ) {
         return chatManagementService.getChat(companyId, chatId, userId);
+    }
+
+    /** Переименовать группу (только директор). */
+    @PatchMapping("/{chatId}")
+    public ChatDetailsResponse renameChat(
+            @PathVariable UUID companyId,
+            @PathVariable UUID chatId,
+            @CurrentUser UUID userId,
+            @Valid @RequestBody RenameChatRequest request
+    ) {
+        return chatManagementService.renameChat(companyId, chatId, userId, request.name());
     }
 
     @PostMapping("/{chatId}/members")
@@ -104,6 +117,42 @@ public class ChatController {
             @Valid @RequestBody CreateFileMessageRequest request
     ) {
         return chatService.createFileMessage(companyId, chatId, userId, request);
+    }
+
+    /** Удалить сообщение у всех: автор или директор. */
+    @DeleteMapping("/{chatId}/messages/{messageId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteMessage(
+            @PathVariable UUID companyId,
+            @PathVariable UUID chatId,
+            @PathVariable UUID messageId,
+            @CurrentUser UUID userId
+    ) {
+        chatMessageActionsService.deleteForEveryone(companyId, chatId, messageId, userId);
+    }
+
+    /** Какие сообщения чата удалены у всех после since (для обновления экрана при polling). */
+    @GetMapping("/{chatId}/messages/deleted")
+    public DeletedMessagesResponse getDeletedMessages(
+            @PathVariable UUID companyId,
+            @PathVariable UUID chatId,
+            @CurrentUser UUID userId,
+            @RequestParam @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME
+            ) java.time.OffsetDateTime since
+    ) {
+        return chatMessageActionsService.getDeletedSince(companyId, chatId, userId, since);
+    }
+
+    /** Кто прочитал сообщение. */
+    @GetMapping("/{chatId}/messages/{messageId}/readers")
+    public MessageReadersResponse getReaders(
+            @PathVariable UUID companyId,
+            @PathVariable UUID chatId,
+            @PathVariable UUID messageId,
+            @CurrentUser UUID userId
+    ) {
+        return chatMessageActionsService.getReaders(companyId, chatId, messageId, userId);
     }
 
     @PostMapping("/{chatId}/read")

@@ -21,4 +21,12 @@ public interface ChatReadStateRepository extends JpaRepository<ChatReadStateEnti
             @Param("chatId") UUID chatId,
             @Param("userId") UUID userId
     );
+
+    /** Отметки «прочитано» всех пользователей чата. */
+    @Query("""
+            SELECT s FROM ChatReadStateEntity s
+            JOIN FETCH s.user u
+            WHERE s.chat.id = :chatId
+            """)
+    java.util.List<ChatReadStateEntity> findByChatIdWithUser(@Param("chatId") UUID chatId);
 }

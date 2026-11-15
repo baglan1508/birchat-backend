@@ -42,6 +42,38 @@ public class CompanyService {
                 .toList();
     }
 
+    public static final String STATUS_DELETED = "DELETED";
+    public static final String MEMBER_STATUS_COMPANY_DELETED = "COMPANY_DELETED";
+
+    /**
+     * Удалить компанию — только директор. Мягкое удаление: компания и участия сотрудников
+     * получают статус «удалено», после этого компания пропадает у всех из списка и любой запрос
+     * к ней даёт 403 NOT_A_MEMBER. Сообщения и файлы остаются в базе — компанию можно восстановить.
+     */
+    @Transactional
+    public void deleteCompany(UUID companyId, UUID userId) {
+        CompanyMemberEntity member = companyMemberRepository
+                .findByCompanyIdAndUserIdAndStatus(companyId, userId, "ACTIVE")
+                .orElseThrow(() -> ApiException.forbidden(
+                        ApiErrorCode.NOT_A_MEMBER,
+                        "Пользователь не состоит в этой компании"
+                ));
+
+        if (member.getRole() == null || !"DIRECTOR".equals(member.getRole().getCode())) {
+            throw ApiException.forbidden(
+                    ApiErrorCode.FORBIDDEN,
+                    "Удалить компанию может только директор"
+            );
+        }
+
+        CompanyEntity company = member.getCompany();
+        company.setStatus(STATUS_DELETED);
+        company.setUpdatedAt(TimeUtils.utcNow());
+        companyRepository.save(company);
+
+        companyMemberRepository.changeActiveStatus(companyId, MEMBER_STATUS_COMPANY_DELETED);
+    }
+
     @Transactional(readOnly = true)
     public CompanyHomeResponse getCompanyHome(UUID companyId, UUID userId) {
         CompanyMemberEntity member = companyMemberRepository
