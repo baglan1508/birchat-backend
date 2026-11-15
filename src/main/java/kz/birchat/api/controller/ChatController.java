@@ -137,7 +137,7 @@ public class ChatController {
             @PathVariable UUID companyId,
             @PathVariable UUID chatId,
             @CurrentUser UUID userId,
-            @RequestParam @org.springframework.format.annotation.DateTimeFormat(
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(
                     iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME
             ) java.time.OffsetDateTime since
     ) {

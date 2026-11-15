@@ -82,6 +82,12 @@ public class ChatMessageActionsService {
         ChatEntity chat = chatAccessService.requireReadableChat(companyId, chatId, userId);
         LocalDateTime now = TimeUtils.utcNow();
 
+        // Первый запрос без since: только отдаём серверное время — от него приложение считает дальше.
+        // Свои часы телефона использовать нельзя: они могут спешить, и удаление потеряется.
+        if (since == null) {
+            return new DeletedMessagesResponse(List.of(), TimeUtils.toUtcOffset(now));
+        }
+
         List<UUID> ids = chatMessageRepository.findDeletedIdsSince(
                 chat.getId(),
                 since.withOffsetSameInstant(ZoneOffset.UTC).toLocalDateTime(),
