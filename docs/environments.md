@@ -67,6 +67,17 @@ feature/... ──PR──▶ develop ──(авто)──▶ staging: про�
 | `AI_GLM_API_KEY` | 🔒 | только если `AI_PROVIDER=glm` |
 | `SENTRY_DSN` | DSN проекта | тот же DSN — события разделяются по environment |
 
+### Push-уведомления (APNs)
+
+| Переменная | Значение |
+|---|---|
+| `APNS_KEY_ID` | 🔒 Key ID ключа APNs (10 символов) |
+| `APNS_PRIVATE_KEY` | 🔒 содержимое файла `AuthKey_XXXXXXXXXX.p8` целиком, вместе со строками `-----BEGIN/END PRIVATE KEY-----` |
+| `APNS_TEAM_ID` | по умолчанию `S59B8XNQ5Z` |
+| `APNS_BUNDLE_ID` | по умолчанию `kz.birchat.app` |
+
+Один и тот же ключ подходит и тесту, и проду. Пока `APNS_KEY_ID` и `APNS_PRIVATE_KEY` не заданы, пуши не отправляются (регистрация устройств работает).
+
 ### Необязательные (значения по умолчанию подходят обоим)
 
 `AUTH_JWT_ISSUER`, `AUTH_JWT_ACCESS_TTL_SECONDS` (900), `AUTH_JWT_REFRESH_TTL_DAYS` (30),
