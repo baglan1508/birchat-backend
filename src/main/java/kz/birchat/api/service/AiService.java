@@ -522,6 +522,12 @@ public class AiService {
      * просто пропускаются. Раньше здесь был Map.entry(id, null): он не принимает null,
      * и любое голосовое в контексте ломало вопросы к AI и сводку (NullPointerException).
      */
+    private boolean voiceTextEnabled() {
+        return aiProperties != null
+                && aiProperties.getMedia() != null
+                && aiProperties.getMedia().isAudioEnabled();
+    }
+
     Map<UUID, String> loadMediaTexts(List<ChatMessageEntity> messages) {
         List<UUID> withAttachments = messages.stream()
                 .filter(message -> attachmentLabel(message.getType()) != null)
@@ -546,6 +552,12 @@ public class AiService {
             }
 
             UUID messageId = attachment.getMessage().getId();
+
+            // Расшифровка выключена — уже сохранённые расшифровки AI тоже не показываем.
+            if (types.get(messageId) == ChatMessageType.VOICE && !voiceTextEnabled()) {
+                continue;
+            }
+
             String text = mediaText(types.get(messageId), attachment.getFile());
 
             if (text != null && !text.isBlank()) {

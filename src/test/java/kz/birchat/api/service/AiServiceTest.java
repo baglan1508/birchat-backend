@@ -417,6 +417,17 @@ class AiServiceTest {
         assertEquals("[голосовое сообщение]", AiService.aiContent(voice, texts.get(voice.getId())));
     }
 
+    @Test
+    void storedTranscriptionIsHiddenWhileVoiceAiIsOff() {
+        ChatMessageEntity voice = typedMessage(ChatMessageType.VOICE);
+        kz.birchat.api.entity.CompanyFileEntity voiceFile = new kz.birchat.api.entity.CompanyFileEntity();
+        voiceFile.setAiStatus(FileAnalysisService.AI_DONE);
+        voiceFile.setAiText("Расшифровка (0:10): بغن قبضة");
+        when(chatAttachmentRepository.findByMessageIds(any())).thenReturn(List.of(attachment(voice, voiceFile)));
+
+        assertTrue(aiService.loadMediaTexts(List.of(voice)).isEmpty());
+    }
+
     private static ChatMessageEntity typedMessage(ChatMessageType type) {
         ChatMessageEntity message = new ChatMessageEntity();
         message.setId(UUID.randomUUID());

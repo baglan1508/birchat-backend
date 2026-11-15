@@ -57,6 +57,7 @@ public class FileAnalysisService {
     static final int SCANNED_PDF_PAGES = 2;
     static final String PDF_TEXT_MODEL = "pdfbox";
     static final String AUDIO_PREFIX = "audio/";
+    static final String AUDIO_DISABLED_REASON = "Расшифровка голосовых выключена";
 
     private final CompanyFileRepository companyFileRepository;
     private final SupabaseStorageService storageService;
@@ -91,6 +92,14 @@ public class FileAnalysisService {
         }
 
         return count == null ? 0 : count;
+    }
+
+    public boolean audioEnabled() {
+        return aiProperties.getMedia() != null && aiProperties.getMedia().isAudioEnabled();
+    }
+
+    private static boolean isAudio(CompanyFileEntity file) {
+        return normalize(file.getContentType()).startsWith(AUDIO_PREFIX);
     }
 
     public boolean isEnabled() {
@@ -130,6 +139,10 @@ public class FileAnalysisService {
         }
 
         String skipReason = skipReason(file);
+
+        if (skipReason == null && isAudio(file) && !audioEnabled()) {
+            skipReason = AUDIO_DISABLED_REASON;
+        }
 
         if (skipReason != null) {
             finish(fileId, AI_SKIPPED, null, null, skipReason);

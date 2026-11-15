@@ -40,7 +40,7 @@ public class FileAnalysisScheduler {
     public void requeueAfterDeploy() {
         LockAssert.assertLocked();
 
-        if (fileAnalysisService.isEnabled()) {
+        if (fileAnalysisService.isEnabled() && fileAnalysisService.audioEnabled()) {
             fileAnalysisService.requeueMissedVoices();
         }
     }
