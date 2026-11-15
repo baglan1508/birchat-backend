@@ -33,4 +33,15 @@ public interface CompanyMemberRepository extends JpaRepository<CompanyMemberEnti
     );
 
     long countByCompanyIdAndStatus(UUID companyId, String status);
+
+    /** Все активные участия в компании → новый статус (удаление компании). */
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("""
+        UPDATE CompanyMemberEntity m SET m.status = :newStatus
+        WHERE m.company.id = :companyId AND m.status = 'ACTIVE'
+        """)
+    int changeActiveStatus(
+            @org.springframework.data.repository.query.Param("companyId") UUID companyId,
+            @org.springframework.data.repository.query.Param("newStatus") String newStatus
+    );
 }

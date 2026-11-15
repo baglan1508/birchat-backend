@@ -142,6 +142,18 @@ public class ChatManagementService {
         return toDetails(companyId, chat, true);
     }
 
+    /** Переименовать группу — только директор. Общий чат не переименовывается. */
+    @Transactional
+    public ChatDetailsResponse renameChat(UUID companyId, UUID chatId, UUID directorId, String name) {
+        currentUserService.requireDirector(companyId, directorId);
+        ChatEntity chat = requireGroupChat(companyId, chatId, "Общий чат нельзя переименовать");
+
+        chat.setName(name.trim());
+        chatRepository.save(chat);
+
+        return toDetails(companyId, chat, true);
+    }
+
     @Transactional
     public void removeMember(
             UUID companyId,
@@ -164,14 +176,19 @@ public class ChatManagementService {
     // ---- внутреннее ----
 
     private ChatEntity requireGroupChat(UUID companyId, UUID chatId) {
+        return requireGroupChat(
+                companyId,
+                chatId,
+                "В общий чат входят все сотрудники компании. "
+                        + "Чтобы добавить человека, добавьте его в компанию"
+        );
+    }
+
+    private ChatEntity requireGroupChat(UUID companyId, UUID chatId, String messageForGeneralChat) {
         ChatEntity chat = chatAccessService.requireCompanyChat(companyId, chatId);
 
         if (!ChatAccessService.isGroup(chat)) {
-            throw ApiException.badRequest(
-                    ApiErrorCode.VALIDATION,
-                    "В общий чат входят все сотрудники компании. "
-                            + "Чтобы добавить человека, добавьте его в компанию"
-            );
+            throw ApiException.badRequest(ApiErrorCode.VALIDATION, messageForGeneralChat);
         }
 
         return chat;

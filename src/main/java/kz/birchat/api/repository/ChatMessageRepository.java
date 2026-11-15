@@ -233,4 +233,17 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
             @Param("companyId") UUID companyId,
             @Param("after") LocalDateTime after
     );
+
+    /** Id сообщений чата, удалённых у всех после момента since. */
+    @Query("""
+        SELECT m.id FROM ChatMessageEntity m
+        WHERE m.chat.id = :chatId
+          AND m.deletedAt > :since
+        ORDER BY m.deletedAt ASC
+        """)
+    List<UUID> findDeletedIdsSince(
+            @Param("chatId") UUID chatId,
+            @Param("since") LocalDateTime since,
+            Pageable pageable
+    );
 }

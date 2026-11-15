@@ -43,6 +43,13 @@ public class ChatMessageEntity {
     @Column(name = "is_deleted")
     private Boolean isDeleted;
 
+    /** Когда сообщение удалено у всех и кем (id пользователя). */
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @Column(name = "deleted_by")
+    private UUID deletedBy;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
