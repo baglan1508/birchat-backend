@@ -5,6 +5,7 @@ import kz.birchat.api.auth.CurrentUser;
 import kz.birchat.api.dto.*;
 import kz.birchat.api.push.ChatPresenceTracker;
 import kz.birchat.api.push.PushNotificationService;
+import kz.birchat.api.realtime.RealtimeEventService;
 import kz.birchat.api.service.ChatManagementService;
 import kz.birchat.api.service.ChatMessageActionsService;
 import kz.birchat.api.service.ChatService;
@@ -25,6 +26,7 @@ public class ChatController {
     private final ChatMessageActionsService chatMessageActionsService;
     private final PushNotificationService pushNotificationService;
     private final ChatPresenceTracker chatPresenceTracker;
+    private final RealtimeEventService realtimeEventService;
 
     // ---- список чатов и групповые чаты ----
 
@@ -63,7 +65,9 @@ public class ChatController {
             @CurrentUser UUID userId,
             @Valid @RequestBody RenameChatRequest request
     ) {
-        return chatManagementService.renameChat(companyId, chatId, userId, request.name());
+        ChatDetailsResponse chat = chatManagementService.renameChat(companyId, chatId, userId, request.name());
+        realtimeEventService.chatRenamed(chatId, chat.name());
+        return chat;
     }
 
     @PostMapping("/{chatId}/members")
@@ -135,6 +139,7 @@ public class ChatController {
             @CurrentUser UUID userId
     ) {
         chatMessageActionsService.deleteForEveryone(companyId, chatId, messageId, userId);
+        realtimeEventService.messageDeleted(chatId, messageId);
     }
 
     /** Какие сообщения чата удалены у всех после since (для обновления экрана при polling). */
@@ -168,7 +173,7 @@ public class ChatController {
             @CurrentUser UUID userId,
             @Valid @RequestBody MarkChatReadRequest request
     ) {
-        return chatService.markAsRead(companyId, chatId, userId, request);
+        return readNotified(chatService.markAsRead(companyId, chatId, userId, request));
     }
 
     // ---- общий чат: прежние адреса для совместимости с приложением ----
@@ -202,7 +207,7 @@ public class ChatController {
             @CurrentUser UUID userId,
             @Valid @RequestBody MarkChatReadRequest request
     ) {
-        return chatService.markGeneralChatAsRead(companyId, userId, request);
+        return readNotified(chatService.markGeneralChatAsRead(companyId, userId, request));
     }
 
     @PostMapping("/general/messages/file")
@@ -215,9 +220,15 @@ public class ChatController {
         return notified(chatService.createGeneralChatFileMessage(companyId, userId, request));
     }
 
-    /** Сообщение уже сохранено — в фоне отправить push участникам чата. */
+    private ChatReadStateResponse readNotified(ChatReadStateResponse state) {
+        realtimeEventService.chatRead(state);
+        return state;
+    }
+
+    /** Сообщение уже сохранено — в фоне отправить push и событие по WebSocket участникам чата. */
     private ChatMessageResponse notified(ChatMessageResponse message) {
         pushNotificationService.messageCreated(message.id());
+        realtimeEventService.messageCreated(message);
         return message;
     }
 }
