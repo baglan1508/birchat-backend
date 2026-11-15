@@ -35,6 +35,16 @@ public class CompanyController {
         return companyService.getCompanyHome(companyId, userId);
     }
 
+    /** Удалить компанию (только директор). */
+    @DeleteMapping("/{companyId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteCompany(
+            @PathVariable UUID companyId,
+            @CurrentUser UUID userId
+    ) {
+        companyService.deleteCompany(companyId, userId);
+    }
+
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public CompanyResponse createCompany(

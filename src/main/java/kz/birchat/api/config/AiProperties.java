@@ -32,6 +32,11 @@ public class AiProperties {
         private boolean enabled = true;
         /** Сколько файлов обрабатывать за один проход. */
         private int batchSize = 5;
+        /**
+         * Расшифровка голосовых. Выключена: GLM-ASR не понимает казахский (выдаёт арабскую вязь).
+         * Пока выключена, AI видит голосовое только как «[голосовое сообщение]».
+         */
+        private boolean audioEnabled = false;
         /** Голосовое длиннее — расшифровываются только первые столько секунд. */
         private int audioMaxSeconds = 600;
     }

@@ -35,4 +35,7 @@ public interface ChatMemberRepository extends JpaRepository<ChatMemberEntity, UU
             @Param("chatId") UUID chatId,
             @Param("userIds") Collection<UUID> userIds
     );
+
+    @Query("SELECT m.user.id FROM ChatMemberEntity m WHERE m.chat.id = :chatId")
+    List<UUID> findUserIdsByChatId(@Param("chatId") UUID chatId);
 }

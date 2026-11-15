@@ -54,13 +54,16 @@ class FileAnalysisServiceTest {
 
     private FileAnalysisService service;
 
+    private final AiProperties aiProperties = new AiProperties();
+
     @BeforeEach
     void setUp() {
+        aiProperties.getMedia().setAudioEnabled(true);
         service = new FileAnalysisService(
                 companyFileRepository,
                 storageService,
                 aiProviderResolver,
-                new AiProperties(),
+                aiProperties,
                 transactionManager,
                 audioConverter
         );
@@ -281,6 +284,24 @@ class FileAnalysisServiceTest {
         verify(companyFileRepository).requeueMissedVoices(since.capture());
         long hours = java.time.Duration.between(since.getValue(), kz.birchat.api.util.TimeUtils.utcNow()).toHours();
         assertTrue(hours >= 71 && hours <= 72, "since = " + since.getValue());
+    }
+
+    @Test
+    void voiceIsSkippedWhileTranscriptionIsOff() {
+        aiProperties.getMedia().setAudioEnabled(false);
+        CompanyFileEntity voice = pendingFile("audio/m4a", 20_000L);
+        when(companyFileRepository.findById(voice.getId())).thenReturn(Optional.of(voice));
+
+        service.process(voice.getId());
+
+        assertEquals(FileAnalysisService.AI_SKIPPED, voice.getAiStatus());
+        assertEquals(FileAnalysisService.AUDIO_DISABLED_REASON, voice.getAiError());
+        verifyNoInteractions(aiProviderResolver, storageService, audioConverter);
+    }
+
+    @Test
+    void transcriptionIsOffByDefault() {
+        assertFalse(new AiProperties().getMedia().isAudioEnabled());
     }
 
     private CompanyFileEntity pendingFile(String contentType, long size) {
