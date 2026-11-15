@@ -19,6 +19,7 @@ import java.util.UUID;
 public class UserController {
 
     private final UserService userService;
+    private final kz.birchat.api.push.DeviceService deviceService;
 
     @GetMapping("/me")
     public UserResponse getMe(@CurrentUser UUID userId) {
@@ -37,5 +38,6 @@ public class UserController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteMe(@CurrentUser UUID userId) {
         userService.deleteMe(userId);
+        deviceService.unregisterAll(userId);
     }
 }

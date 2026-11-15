@@ -3,6 +3,8 @@ package kz.birchat.api.controller;
 import jakarta.validation.Valid;
 import kz.birchat.api.auth.CurrentUser;
 import kz.birchat.api.dto.*;
+import kz.birchat.api.push.ChatPresenceTracker;
+import kz.birchat.api.push.PushNotificationService;
 import kz.birchat.api.service.ChatManagementService;
 import kz.birchat.api.service.ChatMessageActionsService;
 import kz.birchat.api.service.ChatService;
@@ -21,6 +23,8 @@ public class ChatController {
     private final ChatService chatService;
     private final ChatManagementService chatManagementService;
     private final ChatMessageActionsService chatMessageActionsService;
+    private final PushNotificationService pushNotificationService;
+    private final ChatPresenceTracker chatPresenceTracker;
 
     // ---- список чатов и групповые чаты ----
 
@@ -94,7 +98,9 @@ public class ChatController {
             @RequestParam(required = false) UUID before,
             @RequestParam(required = false) Integer limit
     ) {
-        return chatService.getMessages(companyId, chatId, userId, after, before, limit);
+        List<ChatMessageResponse> messages = chatService.getMessages(companyId, chatId, userId, after, before, limit);
+        chatPresenceTracker.touchChat(userId, chatId);
+        return messages;
     }
 
     @PostMapping("/{chatId}/messages")
@@ -105,7 +111,7 @@ public class ChatController {
             @CurrentUser UUID userId,
             @Valid @RequestBody CreateChatMessageRequest request
     ) {
-        return chatService.createMessage(companyId, chatId, userId, request);
+        return notified(chatService.createMessage(companyId, chatId, userId, request));
     }
 
     @PostMapping("/{chatId}/messages/file")
@@ -116,7 +122,7 @@ public class ChatController {
             @CurrentUser UUID userId,
             @Valid @RequestBody CreateFileMessageRequest request
     ) {
-        return chatService.createFileMessage(companyId, chatId, userId, request);
+        return notified(chatService.createFileMessage(companyId, chatId, userId, request));
     }
 
     /** Удалить сообщение у всех: автор или директор. */
@@ -175,7 +181,9 @@ public class ChatController {
             @RequestParam(required = false) UUID before,
             @RequestParam(required = false) Integer limit
     ) {
-        return chatService.getGeneralChatMessages(companyId, userId, after, before, limit);
+        List<ChatMessageResponse> messages = chatService.getGeneralChatMessages(companyId, userId, after, before, limit);
+        chatPresenceTracker.touchGeneralChat(userId, companyId);
+        return messages;
     }
 
     @PostMapping("/general/messages")
@@ -185,7 +193,7 @@ public class ChatController {
             @CurrentUser UUID userId,
             @Valid @RequestBody CreateChatMessageRequest request
     ) {
-        return chatService.createGeneralChatMessage(companyId, userId, request);
+        return notified(chatService.createGeneralChatMessage(companyId, userId, request));
     }
 
     @PostMapping("/general/read")
@@ -204,6 +212,12 @@ public class ChatController {
             @CurrentUser UUID userId,
             @Valid @RequestBody CreateFileMessageRequest request
     ) {
-        return chatService.createGeneralChatFileMessage(companyId, userId, request);
+        return notified(chatService.createGeneralChatFileMessage(companyId, userId, request));
+    }
+
+    /** Сообщение уже сохранено — в фоне отправить push участникам чата. */
+    private ChatMessageResponse notified(ChatMessageResponse message) {
+        pushNotificationService.messageCreated(message.id());
+        return message;
     }
 }

@@ -103,3 +103,12 @@ ai:
     max-message-length: ${AI_SUMMARY_MAX_MESSAGE_LENGTH:500}
     cron: ${AI_SUMMARY_CRON:0 0 */3 * * *}
     zone: ${AI_SUMMARY_ZONE:Asia/Almaty}
+
+# Push-уведомления (APNs). Пока APNS_KEY_ID и APNS_PRIVATE_KEY не заданы, пуши не отправляются.
+push:
+  apns:
+    key-id: ${APNS_KEY_ID:}
+    team-id: ${APNS_TEAM_ID:S59B8XNQ5Z}
+    bundle-id: ${APNS_BUNDLE_ID:kz.birchat.app}
+    # Содержимое файла AuthKey_XXXXXXXXXX.p8 целиком
+    private-key: ${APNS_PRIVATE_KEY:}
