@@ -66,6 +66,7 @@ class RealtimeWebSocketHandlerTest {
         handler.handleMessage(session, new TextMessage("{\"type\":\"auth\",\"accessToken\":\"bad\"}"));
 
         verify(session).close(RealtimeWebSocketHandler.UNAUTHORIZED);
+        assertTrue(sent().contains("{\"type\":\"unauthorized\"}"));
         assertTrue(registry.isEmpty());
     }
 
