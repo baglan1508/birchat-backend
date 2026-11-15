@@ -39,8 +39,9 @@ import java.util.concurrent.TimeUnit;
  * сервер → клиент:
  *   {"type":"auth.ok","userId":"…","expiresAt":"…"}, затем события (см. RealtimeEventService).
  *
- * Токен в адресе не передаётся (адреса попадают в логи). Когда access-токен истекает, сервер
- * закрывает соединение с кодом 4401 — приложение обновляет токен и подключается заново.
+ * Токен в адресе не передаётся (адреса попадают в логи). Когда access-токен неверный или истёк,
+ * сервер шлёт {"type":"unauthorized"} и закрывает соединение (код 4401) — приложение обновляет
+ * токен и подключается заново.
  */
 @Slf4j
 @Component
@@ -77,7 +78,7 @@ public class RealtimeWebSocketHandler extends TextWebSocketHandler {
 
         timer.schedule(() -> {
             if (userOf(safe) == null) {
-                close(safe, UNAUTHORIZED);
+                unauthorized(safe);
             }
         }, AUTH_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
     }
@@ -104,7 +105,7 @@ public class RealtimeWebSocketHandler extends TextWebSocketHandler {
         UUID userId = userOf(session);
 
         if (userId == null) {
-            close(session, UNAUTHORIZED);
+            unauthorized(session);
             return;
         }
 
@@ -124,7 +125,7 @@ public class RealtimeWebSocketHandler extends TextWebSocketHandler {
             userId = currentUserService.currentUserId(jwt);
             expiresAt = jwt.getExpiresAt();
         } catch (RuntimeException ex) {
-            close(session, UNAUTHORIZED);
+            unauthorized(session);
             return;
         }
 
@@ -145,7 +146,7 @@ public class RealtimeWebSocketHandler extends TextWebSocketHandler {
 
         if (expiresAt != null) {
             long delay = Math.max(0, Duration.between(Instant.now(), expiresAt).toMillis());
-            timer.schedule(() -> close(session, UNAUTHORIZED), delay, TimeUnit.MILLISECONDS);
+            timer.schedule(() -> unauthorized(session), delay, TimeUnit.MILLISECONDS);
         }
     }
 
@@ -192,6 +193,18 @@ public class RealtimeWebSocketHandler extends TextWebSocketHandler {
                 close(session, CloseStatus.SESSION_NOT_RELIABLE);
             }
         }
+    }
+
+    /**
+     * Перед закрытием — сообщение {"type":"unauthorized"}: прокси перед сервером (Render) может
+     * не донести код закрытия 4401 до приложения (на тесте приходил 1005), а сообщение доходит.
+     */
+    private void unauthorized(WebSocketSession session) {
+        if (session.isOpen()) {
+            send(session, Map.of("type", "unauthorized"));
+        }
+
+        close(session, UNAUTHORIZED);
     }
 
     private static UUID userOf(WebSocketSession session) {
