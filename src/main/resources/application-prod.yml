@@ -93,6 +93,8 @@ ai:
     # Фоновая обработка фото для AI: описание и текст на фото попадают в сводки и ответы.
     enabled: ${AI_MEDIA_ENABLED:true}
     batch-size: ${AI_MEDIA_BATCH_SIZE:5}
+    # Расшифровка голосовых для AI. Выключена, пока не выбран сервис с поддержкой казахского.
+    audio-enabled: ${AI_MEDIA_AUDIO_ENABLED:false}
     # Голосовые длиннее расшифровываются только в первых N секундах.
     audio-max-seconds: ${AI_MEDIA_AUDIO_MAX_SECONDS:600}
   summary:

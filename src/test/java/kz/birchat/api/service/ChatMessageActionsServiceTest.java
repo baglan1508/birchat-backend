@@ -168,6 +168,15 @@ class ChatMessageActionsServiceTest {
         assertEquals(2, response.recipientsCount()); // коллега и директор
     }
 
+    @Test
+    void firstCheckWithoutSinceOnlyReturnsServerTime() {
+        var response = service.getDeletedSince(companyId, chat.getId(), author.getId(), null);
+
+        assertTrue(response.messageIds().isEmpty());
+        assertNotNull(response.checkedAt());
+        verify(chatMessageRepository, never()).findDeletedIdsSince(any(), any(), any());
+    }
+
     private static UserEntity user(String name) {
         UserEntity user = new UserEntity();
         user.setId(UUID.randomUUID());
