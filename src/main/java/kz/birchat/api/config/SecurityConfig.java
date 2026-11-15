@@ -32,6 +32,8 @@ public class SecurityConfig {
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**",
                                 "/api/health",
+                                // WebSocket: соединение открывается без токена, вход — первым сообщением
+                                "/ws",
                                 "/api/auth/send-code",
                                 "/api/auth/verify-code",
                                 "/api/auth/refresh",
