@@ -121,6 +121,7 @@ public class AiService {
         // 1. Короткое чтение: права и контекст общего чата.
         AskContext context = readTx().execute(status -> {
             checkActiveMember(companyId, userId);
+            checkAiEnabled(companyId);
             String question = normalizeQuestion(request);
             return new AskContext(question, loadRecentGeneralChatContext(companyId));
         });
@@ -175,6 +176,7 @@ public class AiService {
     ) {
         AiDirectorSummaryResponse fresh = readTx().execute(status -> {
             requireDirector(companyId, userId);
+            checkAiEnabled(companyId);
 
             return findFreshSummary(companyId)
                     .map(this::toDirectorSummaryResponse)
@@ -212,8 +214,9 @@ public class AiService {
      * и соединение с базой не держится, пока модель формирует сводку.
      */
     public void refreshCompanySummaries() {
+        // Только компании, где директор включил AI: без согласия сообщения стороннему AI не уходят.
         List<UUID> companyIds = readTx().execute(status -> companyRepository
-                .findByStatus(STATUS_ACTIVE)
+                .findByStatusAndAiEnabledTrue(STATUS_ACTIVE)
                 .stream()
                 .filter(company -> company != null && company.getId() != null)
                 .map(CompanyEntity::getId)
@@ -881,6 +884,25 @@ public class AiService {
         }
 
         return normalized.substring(0, 60) + "...";
+    }
+
+    /**
+     * Можно ли задать вопрос AI: участник компании и AI в компании включён.
+     * Проверяется до списания квоты.
+     */
+    @Transactional(readOnly = true)
+    public void requireAskAllowed(UUID companyId, UUID userId) {
+        checkActiveMember(companyId, userId);
+        checkAiEnabled(companyId);
+    }
+
+    private void checkAiEnabled(UUID companyId) {
+        if (!companyRepository.isAiEnabled(companyId)) {
+            throw ApiException.forbidden(
+                    ApiErrorCode.AI_DISABLED,
+                    "AI выключен директором компании"
+            );
+        }
     }
 
     private void checkActiveMember(UUID companyId, UUID userId) {

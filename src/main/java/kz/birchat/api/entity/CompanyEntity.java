@@ -38,6 +38,10 @@ public class CompanyEntity {
     @Column(name = "status")
     private String status;
 
+    /** Согласие компании на обработку сообщений и файлов сторонним AI (меняет директор). */
+    @Column(name = "ai_enabled", nullable = false)
+    private boolean aiEnabled;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

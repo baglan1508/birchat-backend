@@ -13,6 +13,7 @@ public record CompanyResponse(
         String role,
         String roleLabel,
         String position,
-        UUID generalChatId
+        UUID generalChatId,
+        Boolean aiEnabled
 ) {
 }

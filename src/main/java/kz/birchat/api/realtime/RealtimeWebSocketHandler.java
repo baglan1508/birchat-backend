@@ -34,6 +34,7 @@ import java.util.concurrent.TimeUnit;
  * клиент → сервер:
  *   {"type":"auth","accessToken":"…"}   — первым сообщением, в течение 10 секунд;
  *   {"type":"viewing","chatId":"…"}     — раз в ~10 секунд, пока чат открыт (чтобы не слать push);
+ *   {"type":"viewing","chatId":"general","companyId":"…"} — то же для общего чата без его id;
  *   {"type":"ping"}                     — по желанию, ответ {"type":"pong"}.
  *
  * сервер → клиент:
@@ -111,7 +112,7 @@ public class RealtimeWebSocketHandler extends TextWebSocketHandler {
 
         switch (type) {
             case "ping" -> send(session, Map.of("type", "pong"));
-            case "viewing" -> viewing(userId, json.path("chatId").asText(""));
+            case "viewing" -> viewing(userId, json.path("chatId").asText(""), json.path("companyId").asText(""));
             default -> send(session, Map.of("type", "error", "message", "Неизвестный type: " + type));
         }
     }
@@ -150,11 +151,18 @@ public class RealtimeWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    private void viewing(UUID userId, String chatId) {
+    /**
+     * chatId — id чата; для общего чата можно "general" вместе с companyId.
+     */
+    void viewing(UUID userId, String chatId, String companyId) {
         try {
-            presenceTracker.touchChat(userId, UUID.fromString(chatId));
+            if ("general".equalsIgnoreCase(chatId)) {
+                presenceTracker.touchGeneralChat(userId, UUID.fromString(companyId));
+            } else {
+                presenceTracker.touchChat(userId, UUID.fromString(chatId));
+            }
         } catch (IllegalArgumentException ignored) {
-            // неверный chatId — просто не учитываем
+            // неверный chatId или companyId — просто не учитываем
         }
     }
 

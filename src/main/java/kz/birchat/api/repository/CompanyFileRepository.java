@@ -78,11 +78,25 @@ public interface CompanyFileRepository extends JpaRepository<CompanyFileEntity, 
             Pageable pageable
     );
 
-    /** Очередь обработки для AI: ожидающие файлы, у которых подошло время попытки. */
+    /**
+     * Компания не дала согласия на AI — её файлы в очереди не ждут, а пропускаются:
+     * иначе после включения AI модели ушёл бы весь накопленный архив.
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("""
+        UPDATE CompanyFileEntity f
+        SET f.aiStatus = 'SKIPPED', f.aiError = 'AI выключен в компании'
+        WHERE f.aiStatus = 'PENDING'
+          AND f.company.id IN (SELECT c.id FROM CompanyEntity c WHERE c.aiEnabled = false)
+        """)
+    int skipPendingOfCompaniesWithoutAi();
+
+    /** Очередь обработки для AI: ожидающие файлы компаний с включённым AI, у которых подошло время попытки. */
     @Query("""
         SELECT f FROM CompanyFileEntity f
         WHERE f.aiStatus = 'PENDING'
           AND f.status = 'READY'
+          AND f.company.aiEnabled = true
           AND (f.aiNextAttemptAt IS NULL OR f.aiNextAttemptAt <= :now)
         ORDER BY f.createdAt ASC
         """)

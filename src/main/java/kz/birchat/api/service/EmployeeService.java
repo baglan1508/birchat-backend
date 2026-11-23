@@ -8,6 +8,7 @@ import kz.birchat.api.entity.RoleEntity;
 import kz.birchat.api.entity.UserEntity;
 import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
+import kz.birchat.api.repository.ChatMemberRepository;
 import kz.birchat.api.repository.CompanyMemberRepository;
 import kz.birchat.api.repository.CompanyRepository;
 import kz.birchat.api.repository.RoleRepository;
@@ -26,10 +27,14 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class EmployeeService {
 
+    public static final String STATUS_ACTIVE = "ACTIVE";
+    public static final String STATUS_REMOVED = "REMOVED";
+
     private final CompanyRepository companyRepository;
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
     private final CompanyMemberRepository companyMemberRepository;
+    private final ChatMemberRepository chatMemberRepository;
 
     @Transactional(readOnly = true)
     public List<EmployeeResponse> getEmployees(UUID companyId, UUID userId) {
@@ -88,25 +93,83 @@ public class EmployeeService {
                 })
                 .orElseGet(() -> createUser(phone, request.fullName()));
 
-        if (companyMemberRepository.existsByCompanyIdAndUserIdAndStatus(companyId, user.getId(), "ACTIVE")) {
+        // Пара компания + человек уникальна: убранного раньше сотрудника возвращаем той же записью.
+        CompanyMemberEntity member = companyMemberRepository
+                .findByCompanyIdAndUserId(companyId, user.getId())
+                .orElse(null);
+
+        if (member != null && STATUS_ACTIVE.equals(member.getStatus())) {
             throw ApiException.conflict(
                     ApiErrorCode.ALREADY_MEMBER,
                     "Пользователь уже состоит в этой компании"
             );
         }
 
-        CompanyMemberEntity member = new CompanyMemberEntity();
-        member.setId(UUID.randomUUID());
-        member.setCompany(company);
-        member.setUser(user);
+        if (member == null) {
+            member = new CompanyMemberEntity();
+            member.setId(UUID.randomUUID());
+            member.setCompany(company);
+            member.setUser(user);
+        }
+
         member.setRole(role);
         member.setPosition(request.position());
-        member.setStatus("ACTIVE");
-        member.setJoinedAt(LocalDateTime.now());
+        member.setStatus(STATUS_ACTIVE);
+        member.setJoinedAt(TimeUtils.utcNow());
+        member.setInvitedName(request.fullName().trim());
+        member.setAcceptedAt(null);
 
         CompanyMemberEntity savedMember = companyMemberRepository.save(member);
 
-        return toResponse(savedMember);
+        // Ответ одинаковый для нового и уже зарегистрированного номера: без userId и профиля.
+        return toInvitedResponse(savedMember, phone);
+    }
+
+    /**
+     * Убрать сотрудника из компании — только директор, себя нельзя. Человек выходит из общего чата
+     * и всех групп компании; его сообщения остаются, устройства не трогаем (у него могут быть
+     * другие компании).
+     */
+    @Transactional
+    public void removeEmployee(UUID companyId, UUID actorUserId, UUID employeeUserId) {
+        CompanyMemberEntity actor = companyMemberRepository
+                .findByCompanyIdAndUserIdAndStatus(companyId, actorUserId, STATUS_ACTIVE)
+                .orElseThrow(() -> ApiException.forbidden(
+                        ApiErrorCode.NOT_A_MEMBER,
+                        "Пользователь не состоит в этой компании"
+                ));
+
+        if (!"DIRECTOR".equals(actor.getRole().getCode())) {
+            throw ApiException.forbidden(
+                    ApiErrorCode.FORBIDDEN,
+                    "Убрать сотрудника может только директор"
+            );
+        }
+
+        if (actorUserId.equals(employeeUserId)) {
+            throw ApiException.badRequest(
+                    ApiErrorCode.VALIDATION,
+                    "Нельзя убрать из компании себя"
+            );
+        }
+
+        CompanyMemberEntity member = companyMemberRepository
+                .findByCompanyIdAndUserIdAndStatus(companyId, employeeUserId, STATUS_ACTIVE)
+                .orElseThrow(() -> ApiException.notFound(
+                        ApiErrorCode.USER_NOT_FOUND,
+                        "Сотрудник не найден в компании"
+                ));
+
+        if ("DIRECTOR".equals(member.getRole().getCode())) {
+            throw ApiException.badRequest(
+                    ApiErrorCode.VALIDATION,
+                    "Директора нельзя убрать из компании"
+            );
+        }
+
+        member.setStatus(STATUS_REMOVED);
+        companyMemberRepository.save(member);
+        chatMemberRepository.deleteFromCompanyGroups(companyId, employeeUserId);
     }
 
     private UserEntity createUser(String phone, String fullName) {
@@ -129,15 +192,36 @@ public class EmployeeService {
     private EmployeeResponse toResponse(CompanyMemberEntity member) {
         UserEntity user = member.getUser();
         RoleEntity role = member.getRole();
+        MemberProfile profile = MemberProfile.of(user, member);
 
         return new EmployeeResponse(
                 member.getId(),
                 user.getId(),
-                user.getFullName(),
-                user.getDisplayName(),
-                user.getInitials(),
+                profile.fullName(),
+                profile.displayName(),
+                profile.initials(),
                 user.getPhone(),
-                user.getAvatarUrl(),
+                profile.avatarUrl(),
+                role.getCode(),
+                role.getName(),
+                member.getPosition(),
+                member.getStatus(),
+                TimeUtils.toUtcOffset(member.getJoinedAt())
+        );
+    }
+
+    private EmployeeResponse toInvitedResponse(CompanyMemberEntity member, String phone) {
+        RoleEntity role = member.getRole();
+        String name = member.getInvitedName();
+
+        return new EmployeeResponse(
+                member.getId(),
+                null,
+                name,
+                MemberProfile.displayName(name),
+                MemberProfile.initials(name),
+                phone,
+                null,
                 role.getCode(),
                 role.getName(),
                 member.getPosition(),
@@ -147,25 +231,11 @@ public class EmployeeService {
     }
 
     private String buildDisplayName(String fullName) {
-        if (fullName == null || fullName.isBlank()) {
-            return "Пользователь";
-        }
-
-        return fullName.trim().split("\\s+")[0];
+        return MemberProfile.displayName(fullName);
     }
 
     private String buildInitials(String fullName) {
-        if (fullName == null || fullName.isBlank()) {
-            return "П";
-        }
-
-        String[] parts = fullName.trim().split("\\s+");
-
-        if (parts.length == 1) {
-            return parts[0].substring(0, 1).toUpperCase();
-        }
-
-        return (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
+        return MemberProfile.initials(fullName);
     }
     private boolean hasPlaceholderName(UserEntity user) {
         return "Новый пользователь".equals(user.getFullName())
