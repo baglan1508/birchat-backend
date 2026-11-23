@@ -78,6 +78,14 @@ feature/... ──PR──▶ develop ──(авто)──▶ staging: про�
 
 Один и тот же ключ подходит и тесту, и проду. Пока `APNS_KEY_ID` и `APNS_PRIVATE_KEY` не заданы, пуши не отправляются (регистрация устройств работает).
 
+### Push на Android (FCM)
+
+| Переменная | Значение |
+|---|---|
+| `FCM_SERVICE_ACCOUNT_JSON` | 🔒 JSON-ключ сервисного аккаунта Firebase целиком (файл `…-firebase-adminsdk-….json`) |
+
+Где взять: [console.firebase.google.com](https://console.firebase.google.com) → проект BirChat (создать, если нет) → добавить Android-приложение с пакетом `kz.birchat.app` (отсюда скачивается `google-services.json` для разработчика) → ⚙️ Project settings → Service accounts → Generate new private key. Скачанный JSON вставить в переменную целиком. Один ключ — и тесту, и проду. Пока переменная не задана, пуши на Android не отправляются.
+
 ### Необязательные (значения по умолчанию подходят обоим)
 
 `AUTH_JWT_ISSUER`, `AUTH_JWT_ACCESS_TTL_SECONDS` (900), `AUTH_JWT_REFRESH_TTL_DAYS` (30),
