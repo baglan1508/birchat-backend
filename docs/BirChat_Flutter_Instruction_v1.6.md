@@ -37,6 +37,20 @@
 
 ---
 
+## Проверка пушей: тестовый пуш
+
+```http
+POST /api/devices/test
+Authorization: Bearer {accessToken}
+→ 200 [ { "platform", "environment", "tokenEnd", "result", "status", "reason", "removed" } ]
+```
+
+Отправляет тестовое уведомление на все устройства пользователя и сразу возвращает ответ Apple / Google по каждому: `SENT` — принято; `INVALID_TOKEN` — токен недействителен (устройство удалено, зарегистрируйте заново); `FAILED` — см. `status` и `reason`; `NOT_CONFIGURED` — на сервере нет ключа. Не чаще раза в 10 секунд. Вызывать можно из Postman/curl со своим токеном или из отладочного меню.
+
+Частые причины: `BadDeviceToken` — окружение не совпадает со сборкой (Xcode — `sandbox`, TestFlight и App Store — `production`); `DeviceTokenNotForTopic` — Bundle ID не `kz.birchat.app`.
+
+---
+
 ## 0.3. Согласие компании на AI
 
 ```http
