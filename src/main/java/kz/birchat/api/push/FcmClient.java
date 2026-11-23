@@ -86,11 +86,11 @@ public class FcmClient {
                 resetAccessToken();
             }
 
-            String body = response.body();
+            String answer = response.body();
             return new PushSender.Delivery(
-                    toResult(response.statusCode(), body),
+                    toResult(response.statusCode(), answer),
                     response.statusCode(),
-                    response.statusCode() == 200 || body == null ? null : body.substring(0, Math.min(300, body.length()))
+                    response.statusCode() == 200 || answer == null ? null : answer.substring(0, Math.min(300, answer.length()))
             );
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
