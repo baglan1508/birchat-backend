@@ -54,16 +54,21 @@ public class ApnsClient implements PushSender {
 
     @Override
     public Result send(String deviceToken, String environment, String payloadJson) {
-        return send(deviceToken, environment, payloadJson, "10");
+        return send(deviceToken, environment, payloadJson, "10").result();
     }
 
     /** Только бейдж: тип alert (так Apple требует для бейджа), приоритет 5 — без срочной доставки. */
     @Override
     public Result sendQuiet(String deviceToken, String environment, String payloadJson) {
-        return send(deviceToken, environment, payloadJson, "5");
+        return send(deviceToken, environment, payloadJson, "5").result();
     }
 
-    private Result send(String deviceToken, String environment, String payloadJson, String priority) {
+    @Override
+    public Delivery deliver(String deviceToken, String environment, String payloadJson) {
+        return send(deviceToken, environment, payloadJson, "10");
+    }
+
+    private Delivery send(String deviceToken, String environment, String payloadJson, String priority) {
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(host(environment) + "/3/device/" + deviceToken))
@@ -77,14 +82,28 @@ public class ApnsClient implements PushSender {
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-            return toResult(response.statusCode(), response.body());
+            return new Delivery(
+                    toResult(response.statusCode(), response.body()),
+                    response.statusCode(),
+                    reason(response.body())
+            );
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
-            return Result.FAILED;
+            return new Delivery(Result.FAILED, 0, "interrupted");
         } catch (Exception ex) {
             log.warn("APNs request failed: {}", ex.toString());
-            return Result.FAILED;
+            return new Delivery(Result.FAILED, 0, ex.getClass().getSimpleName() + ": " + ex.getMessage());
         }
+    }
+
+    /** Apple отвечает {"reason":"BadDeviceToken"} — достаём причину. */
+    static String reason(String body) {
+        if (body == null || body.isBlank()) {
+            return null;
+        }
+
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("\"reason\"\\s*:\\s*\"([^\"]+)\"").matcher(body);
+        return matcher.find() ? matcher.group(1) : body.substring(0, Math.min(200, body.length()));
     }
 
     static String host(String environment) {

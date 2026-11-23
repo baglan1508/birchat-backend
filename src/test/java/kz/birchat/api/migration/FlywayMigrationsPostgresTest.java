@@ -71,4 +71,89 @@ class FlywayMigrationsPostgresTest {
         assertFalse(output.getAll().contains("Flyway upgrade recommended"),
                 "Flyway не поддерживает эту версию PostgreSQL");
     }
+
+    /**
+     * Цифра на иконке одним запросом (ChatMessageRepository.UNREAD_TOTAL_SQL) — на настоящей схеме.
+     * Сотрудник B: общий чат (2 от директора, одно прочитано), своя группа, чужая группа, личный чат.
+     */
+    @Test
+    void unreadTotalCountsOnlyVisibleUnreadMessages() {
+        runner.run(context -> {
+            if (context.getStartupFailure() != null) {
+                throw context.getStartupFailure();
+            }
+
+            JdbcTemplate jdbc = new JdbcTemplate(context.getBean(DataSource.class));
+            java.util.UUID a = java.util.UUID.randomUUID();
+            java.util.UUID b = java.util.UUID.randomUUID();
+            java.util.UUID c = java.util.UUID.randomUUID();
+            java.util.UUID company = java.util.UUID.randomUUID();
+            String suffix = a.toString().substring(0, 8);
+
+            for (java.util.UUID user : java.util.List.of(a, b, c)) {
+                jdbc.update("INSERT INTO birchat.users (id, phone, full_name) VALUES (?, ?, 'U')",
+                        user, "+7test" + user.toString().substring(0, 12));
+            }
+
+            jdbc.update("INSERT INTO birchat.companies (id, name, owner_user_id) VALUES (?, ?, ?)", company, "C" + suffix, a);
+            jdbc.update("""
+                    INSERT INTO birchat.company_members (company_id, user_id, role_id, status)
+                    SELECT ?, ?, id, 'ACTIVE' FROM birchat.roles WHERE code = 'DIRECTOR'""", company, a);
+            jdbc.update("""
+                    INSERT INTO birchat.company_members (company_id, user_id, role_id, status)
+                    SELECT ?, ?, id, 'ACTIVE' FROM birchat.roles WHERE code = 'EMPLOYEE'""", company, b);
+            jdbc.update("""
+                    INSERT INTO birchat.company_members (company_id, user_id, role_id, status)
+                    SELECT ?, ?, id, 'ACTIVE' FROM birchat.roles WHERE code = 'EMPLOYEE'""", company, c);
+
+            java.util.UUID general = chat(jdbc, company, "GENERAL");
+            java.util.UUID ownGroup = chat(jdbc, company, "GROUP");
+            java.util.UUID otherGroup = chat(jdbc, company, "GROUP");
+            java.util.UUID deletedGroup = chat(jdbc, company, "GROUP");
+            java.util.UUID direct = chat(jdbc, company, "DIRECT");
+            jdbc.update("UPDATE birchat.chats SET deleted_at = NOW() WHERE id = ?", deletedGroup);
+
+            for (Object[] member : new Object[][]{{ownGroup, b}, {deletedGroup, b}, {direct, b}, {direct, c}}) {
+                jdbc.update("INSERT INTO birchat.chat_members (chat_id, user_id) VALUES (?, ?)", member);
+            }
+
+            java.util.UUID firstGeneral = message(jdbc, company, general, a, "2026-01-01 10:00:00", false);
+            message(jdbc, company, general, a, "2026-01-01 10:01:00", false);
+            message(jdbc, company, general, a, "2026-01-01 10:02:00", true);   // удалено
+            message(jdbc, company, general, b, "2026-01-01 10:03:00", false);  // своё
+            message(jdbc, company, ownGroup, a, "2026-01-01 10:04:00", false);
+            message(jdbc, company, otherGroup, a, "2026-01-01 10:05:00", false); // чужая группа
+            message(jdbc, company, deletedGroup, a, "2026-01-01 10:06:00", false);
+            message(jdbc, company, direct, c, "2026-01-01 10:07:00", false);
+
+            jdbc.update("""
+                    INSERT INTO birchat.chat_read_states (company_id, chat_id, user_id, last_read_message_id, last_read_message_created_at)
+                    VALUES (?, ?, ?, ?, '2026-01-01 10:00:00')""", company, general, b, firstGeneral);
+
+            org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate named =
+                    new org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate(jdbc);
+
+            // B: общий (1 непрочитанное) + своя группа (1) + личный (1)
+            assertEquals(3L, named.queryForObject(kz.birchat.api.repository.ChatMessageRepository.UNREAD_TOTAL_SQL,
+                    java.util.Map.of("userId", b), Long.class));
+            // A (директор): общий — сообщение B (1) + чужие группы видит, но там только его сообщения; личный чат не его
+            assertEquals(1L, named.queryForObject(kz.birchat.api.repository.ChatMessageRepository.UNREAD_TOTAL_SQL,
+                    java.util.Map.of("userId", a), Long.class));
+        });
+    }
+
+    private static java.util.UUID chat(JdbcTemplate jdbc, java.util.UUID company, String type) {
+        java.util.UUID id = java.util.UUID.randomUUID();
+        jdbc.update("INSERT INTO birchat.chats (id, company_id, name, type) VALUES (?, ?, ?, ?)", id, company, type, type);
+        return id;
+    }
+
+    private static java.util.UUID message(JdbcTemplate jdbc, java.util.UUID company, java.util.UUID chat,
+                                          java.util.UUID author, String createdAt, boolean deleted) {
+        java.util.UUID id = java.util.UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO birchat.chat_messages (id, company_id, chat_id, user_id, type, content, is_deleted, created_at)
+                VALUES (?, ?, ?, ?, 'TEXT', 'x', ?, CAST(? AS timestamp))""", id, company, chat, author, deleted, createdAt);
+        return id;
+    }
 }

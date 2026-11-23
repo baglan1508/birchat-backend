@@ -10,6 +10,10 @@ public interface PushSender {
         FAILED
     }
 
+    /** Итог отправки с подробностями для диагностики: HTTP-статус и причина от Apple/Google. */
+    record Delivery(Result result, int status, String reason) {
+    }
+
     boolean isConfigured();
 
     /**
@@ -23,5 +27,10 @@ public interface PushSender {
      */
     default Result sendQuiet(String deviceToken, String environment, String payloadJson) {
         return send(deviceToken, environment, payloadJson);
+    }
+
+    /** Как send, но с подробностями (для тестового пуша). */
+    default Delivery deliver(String deviceToken, String environment, String payloadJson) {
+        return new Delivery(send(deviceToken, environment, payloadJson), 0, null);
     }
 }

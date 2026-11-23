@@ -2,7 +2,6 @@ package kz.birchat.api.push;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
-import kz.birchat.api.dto.ChatSummaryResponse;
 import kz.birchat.api.entity.ChatAttachmentEntity;
 import kz.birchat.api.entity.ChatEntity;
 import kz.birchat.api.entity.ChatMessageEntity;
@@ -12,7 +11,6 @@ import kz.birchat.api.repository.ChatMessageMentionRepository;
 import kz.birchat.api.repository.ChatMessageRepository;
 import kz.birchat.api.repository.CompanyMemberRepository;
 import kz.birchat.api.service.ChatAccessService;
-import kz.birchat.api.service.ChatManagementService;
 import kz.birchat.api.service.ChatMessageActionsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -51,7 +49,6 @@ public class PushNotificationService {
     private final ChatAttachmentRepository chatAttachmentRepository;
     private final CompanyMemberRepository companyMemberRepository;
     private final ChatMessageActionsService chatMessageActionsService;
-    private final ChatManagementService chatManagementService;
     private final ChatMessageMentionRepository chatMessageMentionRepository;
     private final FcmClient fcmClient;
     private final PlatformTransactionManager transactionManager;
@@ -192,20 +189,30 @@ public class PushNotificationService {
         }
 
         List<String> invalidTokens = new ArrayList<>();
+        int sent = 0;
+        int failed = 0;
 
         // Отправка — вне транзакции: соединение с базой не занято, пока отвечает Apple.
         for (Outgoing notification : notifications) {
             PushSender.Result result = send(notification);
 
-            if (result == PushSender.Result.INVALID_TOKEN) {
+            if (result == PushSender.Result.SENT) {
+                sent++;
+            } else if (result == PushSender.Result.INVALID_TOKEN) {
                 invalidTokens.add(notification.deviceToken());
+            } else {
+                failed++;
             }
         }
+
+        // Одна строка на сообщение: видно, что пуши уходят, а не только ошибки.
+        log.info("Push sent. messageId={} devices={} sent={} invalid={} failed={}",
+                messageId, notifications.size(), sent, invalidTokens.size(), failed);
 
         if (!invalidTokens.isEmpty()) {
             new TransactionTemplate(transactionManager).executeWithoutResult(status ->
                     invalidTokens.forEach(deviceTokenRepository::deleteByTokenValue));
-            log.info("Removed {} device tokens rejected by APNs", invalidTokens.size());
+            log.info("Removed {} device tokens rejected by APNs/FCM", invalidTokens.size());
         }
     }
 
@@ -310,15 +317,135 @@ public class PushNotificationService {
 
     /** Цифра на иконке: непрочитанные по всем чатам всех компаний пользователя. */
     int unreadTotal(UUID userId) {
-        long total = 0;
+        return (int) Math.min(chatMessageRepository.countUnreadTotal(userId), 9999);
+    }
 
-        for (CompanyMemberEntity membership : companyMemberRepository.findByUserIdAndStatus(userId, "ACTIVE")) {
-            for (ChatSummaryResponse chat : chatManagementService.getChats(membership.getCompany().getId(), userId)) {
-                total += chat.unreadCount() == null ? 0 : chat.unreadCount();
-            }
+    /** Результат тестового пуша по одному устройству. */
+    public record TestPushResult(
+            String platform,
+            String environment,
+            String tokenEnd,
+            String result,
+            int status,
+            String reason,
+            boolean removed
+    ) {
+    }
+
+    private final Map<UUID, java.time.Instant> lastTestPush = new java.util.concurrent.ConcurrentHashMap<>();
+    static final java.time.Duration TEST_PUSH_INTERVAL = java.time.Duration.ofSeconds(10);
+
+    /**
+     * Тестовый пуш на все устройства пользователя — сразу, с ответом Apple/Google по каждому.
+     * Не чаще раза в 10 секунд. Отклонённые как недействительные токены удаляются, как обычно.
+     */
+    public List<TestPushResult> sendTest(UUID userId) {
+        java.time.Instant now = java.time.Instant.now();
+        java.time.Instant previous = lastTestPush.get(userId);
+
+        if (previous != null && previous.plus(TEST_PUSH_INTERVAL).isAfter(now)) {
+            throw new kz.birchat.api.exception.ApiException(
+                    org.springframework.http.HttpStatus.TOO_MANY_REQUESTS,
+                    kz.birchat.api.exception.ApiErrorCode.TOO_MANY_ATTEMPTS,
+                    "Тестовый пуш — не чаще раза в 10 секунд"
+            );
         }
 
-        return (int) Math.min(total, 9999);
+        lastTestPush.put(userId, now);
+
+        TransactionTemplate readTx = new TransactionTemplate(transactionManager);
+        readTx.setReadOnly(true);
+
+        record Prepared(List<DeviceTokenEntity> devices, int badge) {
+        }
+
+        Prepared prepared = readTx.execute(status -> new Prepared(
+                deviceTokenRepository.findByUserIdIn(Set.of(userId)),
+                unreadTotal(userId)
+        ));
+
+        List<TestPushResult> results = new ArrayList<>();
+        List<String> invalidTokens = new ArrayList<>();
+
+        for (DeviceTokenEntity device : prepared.devices()) {
+            boolean android = DeviceService.PLATFORM_ANDROID.equals(device.getPlatform());
+            String tokenEnd = device.getToken().length() <= 8
+                    ? device.getToken()
+                    : "…" + device.getToken().substring(device.getToken().length() - 8);
+
+            if (!canSend(device)) {
+                results.add(new TestPushResult(device.getPlatform(), device.getEnvironment(), tokenEnd,
+                        "NOT_CONFIGURED", 0, android ? "нет ключа Firebase (FCM_SERVICE_ACCOUNT_JSON)" : "нет ключа APNs", false));
+                continue;
+            }
+
+            String body = "kk".equals(device.getLocale()) ? "Сынақ хабарламасы" : "Тестовое уведомление";
+            PushSender.Delivery delivery;
+
+            try {
+                delivery = android
+                        ? fcmClient.deliver(device.getToken(), objectMapper.valueToTree(androidTestMessage(body)))
+                        : pushSender.deliver(device.getToken(), device.getEnvironment(),
+                                toJson(testPayload(body, prepared.badge())));
+            } catch (Exception ex) {
+                delivery = new PushSender.Delivery(PushSender.Result.FAILED, 0, ex.getMessage());
+            }
+
+            boolean invalid = delivery.result() == PushSender.Result.INVALID_TOKEN;
+
+            if (invalid) {
+                invalidTokens.add(device.getToken());
+            }
+
+            results.add(new TestPushResult(device.getPlatform(), device.getEnvironment(), tokenEnd,
+                    delivery.result().name(), delivery.status(), delivery.reason(), invalid));
+        }
+
+        if (!invalidTokens.isEmpty()) {
+            new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                    invalidTokens.forEach(deviceTokenRepository::deleteByTokenValue));
+        }
+
+        log.info("Test push. userId={} results={}", userId,
+                results.stream().map(r -> r.platform() + "/" + r.environment() + "=" + r.result()
+                        + (r.reason() == null ? "" : "(" + r.reason() + ")")).toList());
+
+        return results;
+    }
+
+    static Map<String, Object> testPayload(String body, int badge) {
+        Map<String, Object> alert = new LinkedHashMap<>();
+        alert.put("title", "BirChat");
+        alert.put("body", body);
+
+        Map<String, Object> aps = new LinkedHashMap<>();
+        aps.put("alert", alert);
+        aps.put("badge", badge);
+        aps.put("sound", "default");
+
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("aps", aps);
+        root.put("type", "test");
+        return root;
+    }
+
+    static Map<String, Object> androidTestMessage(String body) {
+        Map<String, Object> notification = new LinkedHashMap<>();
+        notification.put("title", "BirChat");
+        notification.put("body", body);
+
+        Map<String, Object> androidNotification = new LinkedHashMap<>();
+        androidNotification.put("channel_id", "messages");
+
+        Map<String, Object> android = new LinkedHashMap<>();
+        android.put("priority", "HIGH");
+        android.put("notification", androidNotification);
+
+        Map<String, Object> message = new LinkedHashMap<>();
+        message.put("notification", notification);
+        message.put("data", Map.of("type", "test", "title", "BirChat", "body", body));
+        message.put("android", android);
+        return message;
     }
 
     /**

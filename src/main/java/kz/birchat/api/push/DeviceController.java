@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.UUID;
 
 /** Устройства для push-уведомлений. */
@@ -21,6 +22,7 @@ import java.util.UUID;
 public class DeviceController {
 
     private final DeviceService deviceService;
+    private final PushNotificationService pushNotificationService;
 
     @PostMapping
     @ResponseStatus(HttpStatus.NO_CONTENT)
@@ -29,6 +31,16 @@ public class DeviceController {
             @Valid @RequestBody RegisterDeviceRequest request
     ) {
         deviceService.register(userId, request);
+    }
+
+    /**
+     * Тестовый пуш на все свои устройства. Отвечает, что сказали Apple / Google по каждому:
+     * SENT — принято к доставке; INVALID_TOKEN — токен недействителен (устройство удалено);
+     * FAILED — другая ошибка (status и reason); NOT_CONFIGURED — на сервере нет ключа.
+     */
+    @PostMapping("/test")
+    public List<PushNotificationService.TestPushResult> sendTest(@CurrentUser UUID userId) {
+        return pushNotificationService.sendTest(userId);
     }
 
     @DeleteMapping("/{token}")
