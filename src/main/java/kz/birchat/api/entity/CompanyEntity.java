@@ -42,6 +42,10 @@ public class CompanyEntity {
     @Column(name = "ai_enabled", nullable = false)
     private boolean aiEnabled;
 
+    /** Группы могут создавать все сотрудники, а не только директор. */
+    @Column(name = "members_can_create_groups", nullable = false)
+    private boolean membersCanCreateGroups;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

@@ -119,7 +119,7 @@ class CompanyFileServiceTest {
         mockOutsider();
 
         ApiException exception = assertThrows(ApiException.class, () -> companyFileService.createUploadUrl(
-                companyId, outsiderId, new CreateUploadUrlRequest("a.jpg", "image/jpeg", 100L, null)));
+                companyId, outsiderId, new CreateUploadUrlRequest("a.jpg", "image/jpeg", 100L, null, null)));
 
         assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
         verifyNoInteractions(supabaseStorageService, companyFileRepository);
@@ -130,7 +130,7 @@ class CompanyFileServiceTest {
         mockMember();
 
         ApiException exception = assertThrows(ApiException.class, () -> companyFileService.createUploadUrl(
-                companyId, memberId, new CreateUploadUrlRequest("a.exe", "application/x-msdownload", 100L, null)));
+                companyId, memberId, new CreateUploadUrlRequest("a.exe", "application/x-msdownload", 100L, null, null)));
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
         verifyNoInteractions(supabaseStorageService, companyFileRepository);
@@ -141,7 +141,7 @@ class CompanyFileServiceTest {
         mockMember();
 
         ApiException exception = assertThrows(ApiException.class, () -> companyFileService.createUploadUrl(
-                companyId, memberId, new CreateUploadUrlRequest("v.mp4", "video/mp4", 21L * 1024 * 1024, null)));
+                companyId, memberId, new CreateUploadUrlRequest("v.mp4", "video/mp4", 21L * 1024 * 1024, null, null)));
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
         verifyNoInteractions(supabaseStorageService);
@@ -158,7 +158,7 @@ class CompanyFileServiceTest {
         when(supabaseStorageService.createSignedUploadUrl("companies/c/x.jpg")).thenReturn("https://s/upload?token=t");
 
         var response = companyFileService.createUploadUrl(
-                companyId, memberId, new CreateUploadUrlRequest("photo.JPG", "Image/JPEG", 1000L, null));
+                companyId, memberId, new CreateUploadUrlRequest("photo.JPG", "Image/JPEG", 1000L, null, null));
 
         assertEquals("https://s/upload?token=t", response.uploadUrl());
         assertEquals("PUT", response.method());

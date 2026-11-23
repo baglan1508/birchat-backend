@@ -56,6 +56,9 @@ class ChatManagementServiceTest {
     @Mock
     private CompanyMemberRepository companyMemberRepository;
 
+    @Mock
+    private ChatMessageActionsService chatMessageActionsService;
+
     @InjectMocks
     private ChatManagementService service;
 
@@ -65,8 +68,8 @@ class ChatManagementServiceTest {
 
     @Test
     void nonDirectorCannotCreateGroup() {
-        when(currentUserService.requireDirector(companyId, employeeId))
-                .thenThrow(ApiException.forbidden(ApiErrorCode.FORBIDDEN, "Только директор"));
+        when(currentUserService.requireActiveMember(companyId, employeeId))
+                .thenReturn(companyMember(employeeId, "EMPLOYEE"));
 
         ApiException error = assertThrows(ApiException.class, () -> service.createGroupChat(
                 companyId, employeeId, new CreateGroupChatRequest("Склад", List.of())
@@ -78,7 +81,7 @@ class ChatManagementServiceTest {
 
     @Test
     void cannotAddPeopleFromOutsideTheCompany() {
-        when(currentUserService.requireDirector(companyId, directorId))
+        when(currentUserService.requireActiveMember(companyId, directorId))
                 .thenReturn(companyMember(directorId, "DIRECTOR"));
         when(companyMemberRepository.findByCompanyIdAndStatusOrderByJoinedAtAsc(companyId, "ACTIVE"))
                 .thenReturn(List.of(companyMember(directorId, "DIRECTOR")));
@@ -100,7 +103,7 @@ class ChatManagementServiceTest {
         CompanyMemberEntity director = companyMember(directorId, "DIRECTOR");
         CompanyMemberEntity employee = companyMember(employeeId, "EMPLOYEE");
 
-        when(currentUserService.requireDirector(companyId, directorId)).thenReturn(director);
+        when(currentUserService.requireActiveMember(companyId, directorId)).thenReturn(director);
         when(companyMemberRepository.findByCompanyIdAndStatusOrderByJoinedAtAsc(companyId, "ACTIVE"))
                 .thenReturn(List.of(director, employee));
         when(chatRepository.save(any(ChatEntity.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -130,7 +133,7 @@ class ChatManagementServiceTest {
         general.setId(UUID.randomUUID());
         general.setType("GENERAL");
 
-        when(currentUserService.requireDirector(companyId, directorId))
+        when(currentUserService.requireActiveMember(companyId, directorId))
                 .thenReturn(companyMember(directorId, "DIRECTOR"));
         when(chatAccessService.requireCompanyChat(companyId, general.getId())).thenReturn(general);
 
@@ -214,7 +217,7 @@ class ChatManagementServiceTest {
         ChatEntity direct = new ChatEntity();
         direct.setId(UUID.randomUUID());
         direct.setType("DIRECT");
-        when(currentUserService.requireDirector(companyId, directorId)).thenReturn(companyMember(directorId, "DIRECTOR"));
+        when(currentUserService.requireActiveMember(companyId, directorId)).thenReturn(companyMember(directorId, "DIRECTOR"));
         when(chatAccessService.requireCompanyChat(companyId, direct.getId())).thenReturn(direct);
 
         ApiException error = assertThrows(ApiException.class,
@@ -259,6 +262,76 @@ class ChatManagementServiceTest {
         assertNull(chats.get(0).name());
         assertEquals(directorId, chats.get(0).peer().userId());
         assertEquals("Нурлан Ахметов", chats.get(0).peer().fullName());
+    }
+
+    @Test
+    void employeeCreatesGroupWhenCompanyAllowsAndManagesIt() {
+        CompanyMemberEntity employee = companyMember(employeeId, "EMPLOYEE");
+        employee.getCompany().setMembersCanCreateGroups(true);
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(employee);
+        when(companyMemberRepository.findByCompanyIdAndStatusOrderByJoinedAtAsc(companyId, "ACTIVE"))
+                .thenReturn(List.of(employee));
+        when(chatRepository.save(any(ChatEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(chatMemberRepository.findMembers(any())).thenReturn(List.of());
+
+        ChatDetailsResponse response = service.createGroupChat(companyId, employeeId, new CreateGroupChatRequest("Склад", List.of()));
+
+        assertTrue(response.canManage());
+        assertEquals(employeeId, response.createdBy());
+    }
+
+    @Test
+    void groupCreatorCanRenameButOtherEmployeeCannot() {
+        ChatEntity group = new ChatEntity();
+        group.setId(UUID.randomUUID());
+        group.setType("GROUP");
+        UserEntity creator = new UserEntity();
+        creator.setId(employeeId);
+        group.setCreatedBy(creator);
+        when(chatAccessService.requireCompanyChat(companyId, group.getId())).thenReturn(group);
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(companyMember(employeeId, "EMPLOYEE"));
+        when(chatMemberRepository.findMembers(any())).thenReturn(List.of());
+
+        assertEquals("Новое", service.renameChat(companyId, group.getId(), employeeId, "Новое").name());
+
+        UUID otherId = UUID.randomUUID();
+        when(currentUserService.requireActiveMember(companyId, otherId)).thenReturn(companyMember(otherId, "EMPLOYEE"));
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> service.renameChat(companyId, group.getId(), otherId, "Чужое"));
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+    }
+
+    @Test
+    void deletedGroupIsHiddenAndMembersLeave() {
+        ChatEntity group = new ChatEntity();
+        group.setId(UUID.randomUUID());
+        group.setType("GROUP");
+        when(chatAccessService.requireCompanyChat(companyId, group.getId())).thenReturn(group);
+        when(currentUserService.requireActiveMember(companyId, directorId)).thenReturn(companyMember(directorId, "DIRECTOR"));
+        when(chatMessageActionsService.recipients(companyId, group)).thenReturn(new java.util.HashSet<>(java.util.Set.of(directorId, employeeId)));
+
+        java.util.Set<UUID> participants = service.deleteGroup(companyId, group.getId(), directorId);
+
+        assertEquals(java.util.Set.of(directorId, employeeId), participants);
+        assertNotNull(group.getDeletedAt());
+        assertEquals(directorId, group.getDeletedBy());
+        verify(chatMemberRepository).deleteByChatId(group.getId());
+    }
+
+    @Test
+    void employeeCannotPinInGeneralChat() {
+        ChatEntity general = new ChatEntity();
+        general.setId(UUID.randomUUID());
+        general.setType("GENERAL");
+        when(chatAccessService.requireReadableChat(companyId, general.getId(), employeeId)).thenReturn(general);
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(companyMember(employeeId, "EMPLOYEE"));
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> service.pinMessage(companyId, general.getId(), UUID.randomUUID(), employeeId));
+
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+        verify(chatRepository, never()).save(any());
     }
 
     private CompanyMemberEntity companyMember(UUID userId, String roleCode) {

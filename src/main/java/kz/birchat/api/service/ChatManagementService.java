@@ -4,6 +4,7 @@ import kz.birchat.api.auth.CurrentUserService;
 import kz.birchat.api.dto.AddChatMembersRequest;
 import kz.birchat.api.dto.ChatDetailsResponse;
 import kz.birchat.api.dto.ChatMemberResponse;
+import kz.birchat.api.dto.ChatMessageResponse;
 import kz.birchat.api.dto.ChatPeerResponse;
 import kz.birchat.api.dto.ChatSummaryResponse;
 import kz.birchat.api.dto.CreateGroupChatRequest;
@@ -51,6 +52,7 @@ public class ChatManagementService {
     private final ChatMemberRepository chatMemberRepository;
     private final ChatMessageRepository chatMessageRepository;
     private final CompanyMemberRepository companyMemberRepository;
+    private final ChatMessageActionsService chatMessageActionsService;
 
     @Transactional(readOnly = true)
     public List<ChatSummaryResponse> getChats(UUID companyId, UUID userId) {
@@ -107,7 +109,7 @@ public class ChatManagementService {
                     return saved;
                 });
 
-        return toDetails(companyId, chat, false);
+        return toDetails(companyId, chat, false, userId);
     }
 
     static String directKey(UUID first, UUID second) {
@@ -119,20 +121,30 @@ public class ChatManagementService {
     @Transactional(readOnly = true)
     public ChatDetailsResponse getChat(UUID companyId, UUID chatId, UUID userId) {
         ChatEntity chat = chatAccessService.requireReadableChat(companyId, chatId, userId);
-        boolean director = CurrentUserService.isDirector(
-                currentUserService.requireActiveMember(companyId, userId)
-        );
+        CompanyMemberEntity member = currentUserService.requireActiveMember(companyId, userId);
 
-        return toDetails(companyId, chat, director);
+        return toDetails(companyId, chat, ChatAccessService.canManageGroup(chat, member, userId), userId);
     }
 
+    /**
+     * Новая группа. Создаёт директор, а если в компании включено membersCanCreateGroups — любой
+     * сотрудник; создатель становится участником и управляет своей группой.
+     */
     @Transactional
     public ChatDetailsResponse createGroupChat(
             UUID companyId,
-            UUID directorId,
+            UUID creatorId,
             CreateGroupChatRequest request
     ) {
-        CompanyMemberEntity director = currentUserService.requireDirector(companyId, directorId);
+        CompanyMemberEntity creator = currentUserService.requireActiveMember(companyId, creatorId);
+
+        if (!CurrentUserService.isDirector(creator)
+                && (creator.getCompany() == null || !creator.getCompany().isMembersCanCreateGroups())) {
+            throw ApiException.forbidden(
+                    ApiErrorCode.FORBIDDEN,
+                    "Группы в этой компании создаёт директор"
+            );
+        }
 
         String name = request.name() == null ? "" : request.name().trim();
 
@@ -141,7 +153,7 @@ public class ChatManagementService {
         }
 
         Set<UUID> memberIds = new LinkedHashSet<>();
-        memberIds.add(directorId);
+        memberIds.add(creatorId);
 
         if (request.memberUserIds() != null) {
             memberIds.addAll(request.memberUserIds());
@@ -153,32 +165,32 @@ public class ChatManagementService {
 
         ChatEntity chat = new ChatEntity();
         chat.setId(UUID.randomUUID());
-        chat.setCompany(director.getCompany());
+        chat.setCompany(creator.getCompany());
         chat.setName(name);
         chat.setType(ChatType.GROUP.name());
-        chat.setCreatedBy(director.getUser());
+        chat.setCreatedBy(creator.getUser());
         chat.setCreatedAt(now);
 
         ChatEntity saved = chatRepository.save(chat);
 
         List<ChatMemberEntity> members = memberIds.stream()
-                .map(id -> newMember(saved, companyMembers.get(id).getUser(), director.getUser(), now))
+                .map(id -> newMember(saved, companyMembers.get(id).getUser(), creator.getUser(), now))
                 .toList();
 
         chatMemberRepository.saveAll(members);
 
-        return toDetails(companyId, saved, true);
+        return toDetails(companyId, saved, true, creatorId);
     }
 
     @Transactional
     public ChatDetailsResponse addMembers(
             UUID companyId,
             UUID chatId,
-            UUID directorId,
+            UUID managerId,
             AddChatMembersRequest request
     ) {
-        CompanyMemberEntity director = currentUserService.requireDirector(companyId, directorId);
-        ChatEntity chat = requireGroupChat(companyId, chatId);
+        Managed managed = requireManagedGroup(companyId, chatId, managerId);
+        ChatEntity chat = managed.chat();
 
         Set<UUID> requested = new LinkedHashSet<>(request.userIds());
         Map<UUID, CompanyMemberEntity> companyMembers = requireCompanyMembers(companyId, requested);
@@ -188,35 +200,33 @@ public class ChatManagementService {
 
         List<ChatMemberEntity> newMembers = requested.stream()
                 .filter(id -> !alreadyInChat.contains(id))
-                .map(id -> newMember(chat, companyMembers.get(id).getUser(), director.getUser(), now))
+                .map(id -> newMember(chat, companyMembers.get(id).getUser(), managed.member().getUser(), now))
                 .toList();
 
         chatMemberRepository.saveAll(newMembers);
 
-        return toDetails(companyId, chat, true);
+        return toDetails(companyId, chat, true, managerId);
     }
 
-    /** Переименовать группу — только директор. Общий чат не переименовывается. */
+    /** Переименовать группу — директор или создатель. Общий и личный чат не переименовываются. */
     @Transactional
-    public ChatDetailsResponse renameChat(UUID companyId, UUID chatId, UUID directorId, String name) {
-        currentUserService.requireDirector(companyId, directorId);
-        ChatEntity chat = requireGroupChat(companyId, chatId, "Общий чат нельзя переименовать");
+    public ChatDetailsResponse renameChat(UUID companyId, UUID chatId, UUID managerId, String name) {
+        ChatEntity chat = requireManagedGroup(companyId, chatId, managerId, "Общий чат нельзя переименовать").chat();
 
         chat.setName(name.trim());
         chatRepository.save(chat);
 
-        return toDetails(companyId, chat, true);
+        return toDetails(companyId, chat, true, managerId);
     }
 
     @Transactional
     public void removeMember(
             UUID companyId,
             UUID chatId,
-            UUID directorId,
+            UUID managerId,
             UUID memberUserId
     ) {
-        currentUserService.requireDirector(companyId, directorId);
-        ChatEntity chat = requireGroupChat(companyId, chatId);
+        ChatEntity chat = requireManagedGroup(companyId, chatId, managerId).chat();
 
         ChatMemberEntity member = chatMemberRepository.findByChatIdAndUserId(chat.getId(), memberUserId)
                 .orElseThrow(() -> ApiException.notFound(
@@ -227,16 +237,104 @@ public class ChatManagementService {
         chatMemberRepository.delete(member);
     }
 
-    // ---- внутреннее ----
+    /**
+     * Удалить группу — директор или создатель. Группа скрывается у всех: участники выходят из неё,
+     * сообщения и файлы группы больше нигде не видны, открытый чат отвечает 403 CHAT_ACCESS_DENIED.
+     *
+     * @return кто был в группе — им уходит событие chat.deleted
+     */
+    @Transactional
+    public Set<UUID> deleteGroup(UUID companyId, UUID chatId, UUID managerId) {
+        ChatEntity chat = requireManagedGroup(companyId, chatId, managerId, "Общий чат удалить нельзя").chat();
 
-    private ChatEntity requireGroupChat(UUID companyId, UUID chatId) {
-        return requireGroupChat(
+        Set<UUID> participants = chatMessageActionsService.recipients(companyId, chat);
+
+        chat.setDeletedAt(TimeUtils.utcNow());
+        chat.setDeletedBy(managerId);
+        chat.setPinnedMessage(null);
+        chatRepository.save(chat);
+        chatMemberRepository.deleteByChatId(chat.getId());
+
+        return participants;
+    }
+
+    /**
+     * Закрепить сообщение (одно на чат): в общем чате — директор, в группе — директор или создатель,
+     * в личном — любой из двоих. Возвращает закреплённое сообщение для события chat.pinned.
+     */
+    @Transactional
+    public ChatMessageResponse pinMessage(UUID companyId, UUID chatId, UUID messageId, UUID userId) {
+        ChatEntity chat = requirePinRights(companyId, chatId, userId);
+
+        ChatMessageEntity message = chatMessageRepository.findById(messageId)
+                .filter(found -> chat.getId().equals(found.getChat().getId()))
+                .filter(found -> !Boolean.TRUE.equals(found.getIsDeleted()))
+                .orElseThrow(() -> ApiException.notFound(
+                        ApiErrorCode.MESSAGE_NOT_FOUND,
+                        "Сообщение не найдено"
+                ));
+
+        chat.setPinnedMessage(message);
+        chatRepository.save(chat);
+
+        return chatService.toResponses(List.of(message), null).get(0);
+    }
+
+    @Transactional
+    public void unpinMessage(UUID companyId, UUID chatId, UUID userId) {
+        ChatEntity chat = requirePinRights(companyId, chatId, userId);
+
+        chat.setPinnedMessage(null);
+        chatRepository.save(chat);
+    }
+
+    private ChatEntity requirePinRights(UUID companyId, UUID chatId, UUID userId) {
+        ChatEntity chat = chatAccessService.requireReadableChat(companyId, chatId, userId);
+        CompanyMemberEntity member = currentUserService.requireActiveMember(companyId, userId);
+
+        boolean allowed = ChatAccessService.isDirect(chat)
+                || (ChatAccessService.isGeneral(chat) && CurrentUserService.isDirector(member))
+                || ChatAccessService.canManageGroup(chat, member, userId);
+
+        if (!allowed) {
+            throw ApiException.forbidden(
+                    ApiErrorCode.FORBIDDEN,
+                    "Закрепить сообщение может директор или создатель группы"
+            );
+        }
+
+        return chat;
+    }
+
+    private record Managed(ChatEntity chat, CompanyMemberEntity member) {
+    }
+
+    private Managed requireManagedGroup(UUID companyId, UUID chatId, UUID userId) {
+        return requireManagedGroup(
                 companyId,
                 chatId,
+                userId,
                 "В общий чат входят все сотрудники компании. "
                         + "Чтобы добавить человека, добавьте его в компанию"
         );
     }
+
+    /** Группа этой компании, которой пользователь управляет (директор или создатель). */
+    private Managed requireManagedGroup(UUID companyId, UUID chatId, UUID userId, String messageForGeneralChat) {
+        CompanyMemberEntity member = currentUserService.requireActiveMember(companyId, userId);
+        ChatEntity chat = requireGroupChat(companyId, chatId, messageForGeneralChat);
+
+        if (!ChatAccessService.canManageGroup(chat, member, userId)) {
+            throw ApiException.forbidden(
+                    ApiErrorCode.FORBIDDEN,
+                    "Управлять группой может директор или её создатель"
+            );
+        }
+
+        return new Managed(chat, member);
+    }
+
+    // ---- внутреннее ----
 
     private ChatEntity requireGroupChat(UUID companyId, UUID chatId, String messageForGeneralChat) {
         ChatEntity chat = chatAccessService.requireCompanyChat(companyId, chatId);
@@ -336,7 +434,7 @@ public class ChatManagementService {
                 .orElse(null);
     }
 
-    private ChatDetailsResponse toDetails(UUID companyId, ChatEntity chat, boolean director) {
+    private ChatDetailsResponse toDetails(UUID companyId, ChatEntity chat, boolean canManage, UUID viewerId) {
         Map<UUID, CompanyMemberEntity> companyMembers = companyMemberRepository
                 .findByCompanyIdAndStatusOrderByJoinedAtAsc(companyId, STATUS_ACTIVE)
                 .stream()
@@ -361,9 +459,21 @@ public class ChatManagementService {
                 ChatAccessService.isDirect(chat) ? null : chat.getName(),
                 chat.getCreatedBy() == null ? null : chat.getCreatedBy().getId(),
                 TimeUtils.toUtcOffset(chat.getCreatedAt()),
-                director && ChatAccessService.isGroup(chat),
-                members
+                canManage,
+                members,
+                pinnedMessage(chat, viewerId)
         );
+    }
+
+    /** Закреплённое сообщение чата, если оно не удалено. */
+    public ChatMessageResponse pinnedMessage(ChatEntity chat, UUID viewerId) {
+        ChatMessageEntity pinned = chat.getPinnedMessage();
+
+        if (pinned == null || Boolean.TRUE.equals(pinned.getIsDeleted())) {
+            return null;
+        }
+
+        return chatService.toResponses(List.of(pinned), viewerId).get(0);
     }
 
     private ChatMemberResponse toMember(UserEntity user, CompanyMemberEntity membership, LocalDateTime addedAt) {

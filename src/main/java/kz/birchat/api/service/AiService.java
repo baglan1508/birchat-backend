@@ -17,6 +17,7 @@ import kz.birchat.api.entity.AiCompanySummaryEntity;
 import kz.birchat.api.entity.AiMessageEntity;
 import kz.birchat.api.entity.AiThreadEntity;
 import kz.birchat.api.entity.ChatAttachmentEntity;
+import kz.birchat.api.entity.ChatEntity;
 import kz.birchat.api.entity.ChatMessageEntity;
 import kz.birchat.api.entity.CompanyEntity;
 import kz.birchat.api.entity.CompanyFileEntity;
@@ -118,12 +119,12 @@ public class AiService {
     ) {
         LocalDateTime askedAt = TimeUtils.utcNow();
 
-        // 1. Короткое чтение: права и контекст общего чата.
+        // 1. Короткое чтение: права и контекст — общий чат и группы, которые видит пользователь.
         AskContext context = readTx().execute(status -> {
             checkActiveMember(companyId, userId);
             checkAiEnabled(companyId);
             String question = normalizeQuestion(request);
-            return new AskContext(question, loadRecentGeneralChatContext(companyId));
+            return new AskContext(question, loadRecentChatContext(companyId, userId));
         });
 
         // 2. Вызов модели — вне транзакции.
@@ -392,7 +393,7 @@ public class AiService {
             return true;
         }
 
-        Long count = chatMessageRepository.countGeneralChatMessagesAfterForAiSummary(
+        Long count = chatMessageRepository.countCompanyMessagesAfterForAiSummary(
                 companyId,
                 summary.getPeriodEnd()
         );
@@ -413,8 +414,8 @@ public class AiService {
         LocalDateTime periodStart = buildTodayPeriodStartUtc(now);
         LocalDateTime periodEnd = now;
 
-        // 1. Короткое чтение сообщений за период.
-        List<AiProviderMessage> contextMessages = readTx().execute(status -> loadSummaryChatContext(
+        // 1. Короткое чтение сообщений за период: общий чат и все группы.
+        SummaryContext context = readTx().execute(status -> loadSummaryChatContext(
                 companyId,
                 periodStart,
                 periodEnd
@@ -426,17 +427,20 @@ public class AiService {
                         companyId,
                         periodStart,
                         periodEnd,
-                        contextMessages
+                        context.messages(),
+                        context.chats()
                 )
         );
 
         // 3. Короткая запись сводки.
-        return tx().execute(status -> saveSummary(companyId, providerResponse, periodStart, periodEnd, now));
+        return tx().execute(status -> saveSummary(companyId, providerResponse, context.chats(),
+                periodStart, periodEnd, now));
     }
 
     private AiCompanySummaryEntity saveSummary(
             UUID companyId,
             AiSummaryProviderResponse providerResponse,
+            List<AiSummaryProviderRequest.Chat> chats,
             LocalDateTime periodStart,
             LocalDateTime periodEnd,
             LocalDateTime now
@@ -453,6 +457,7 @@ public class AiService {
         entity.setSummary(normalizeSummaryText(providerResponse.summary()));
         entity.setItemsText(joinSummaryItems(providerResponse.items()));
         entity.setModel(providerResponse.model());
+        entity.setSectionsJson(sectionsJson(providerResponse.sections(), chats));
         entity.setPeriodStart(periodStart);
         entity.setPeriodEnd(periodEnd);
         entity.setGeneratedAt(now);
@@ -462,13 +467,20 @@ public class AiService {
         return aiCompanySummaryRepository.save(entity);
     }
 
-    private List<AiProviderMessage> loadSummaryChatContext(
+    private record SummaryContext(List<AiProviderMessage> messages, List<AiSummaryProviderRequest.Chat> chats) {
+    }
+
+    /**
+     * Сообщения общего чата и групп за период. Чаты нумеруются (общий — первым), номер стоит
+     * в source каждого сообщения: по нему модель возвращает раздел сводки для чата.
+     */
+    private SummaryContext loadSummaryChatContext(
             UUID companyId,
             LocalDateTime periodStart,
             LocalDateTime periodEnd
     ) {
         List<ChatMessageEntity> messages = chatMessageRepository
-                .findGeneralChatMessagesForAiSummary(
+                .findCompanyMessagesForAiSummary(
                         companyId,
                         periodStart,
                         periodEnd,
@@ -480,15 +492,40 @@ public class AiService {
                         .thenComparing(ChatMessageEntity::getId))
                 .toList();
 
+        List<ChatEntity> chatsInOrder = messages.stream()
+                .map(ChatMessageEntity::getChat)
+                .collect(Collectors.toMap(ChatEntity::getId, chat -> chat, (a, b) -> a, LinkedHashMap::new))
+                .values()
+                .stream()
+                .sorted(Comparator.comparing((ChatEntity chat) -> ChatAccessService.isGeneral(chat) ? 0 : 1))
+                .toList();
+
+        Map<UUID, String> sources = new HashMap<>();
+        List<AiSummaryProviderRequest.Chat> chats = new ArrayList<>();
+
+        for (int i = 0; i < chatsInOrder.size(); i++) {
+            ChatEntity chat = chatsInOrder.get(i);
+            int number = i + 1;
+            chats.add(new AiSummaryProviderRequest.Chat(number, chat.getId(), chatTitle(chat)));
+            sources.put(chat.getId(), "#" + number + " " + chatLabel(chat));
+        }
+
         int maxLength = summaryMaxMessageLength();
 
-        return toProviderMessages(messages, maxLength, maxLength * 2);
+        return new SummaryContext(toProviderMessages(messages, maxLength, maxLength * 2, sources), chats);
     }
 
-    private List<AiProviderMessage> loadRecentGeneralChatContext(UUID companyId) {
+    private List<AiProviderMessage> loadRecentChatContext(UUID companyId, UUID userId) {
+        boolean director = companyMemberRepository
+                .findByCompanyIdAndUserIdAndStatus(companyId, userId, STATUS_ACTIVE)
+                .map(member -> member.getRole() != null && "DIRECTOR".equals(member.getRole().getCode()))
+                .orElse(false);
+
         List<ChatMessageEntity> messages = chatMessageRepository
-                .findLatestGeneralChatMessagesForAiContext(
+                .findLatestMessagesForAiContext(
                         companyId,
+                        userId,
+                        director,
                         PageRequest.of(0, AI_CHAT_CONTEXT_LIMIT)
                 )
                 .stream()
@@ -497,7 +534,76 @@ public class AiService {
                         .thenComparing(ChatMessageEntity::getId))
                 .toList();
 
-        return toProviderMessages(messages, AI_CONTEXT_MESSAGE_MAX_LENGTH, AI_CONTEXT_MEDIA_MAX_LENGTH);
+        Map<UUID, String> sources = new HashMap<>();
+        messages.forEach(message -> sources.putIfAbsent(message.getChat().getId(), chatLabel(message.getChat())));
+
+        return toProviderMessages(messages, AI_CONTEXT_MESSAGE_MAX_LENGTH, AI_CONTEXT_MEDIA_MAX_LENGTH, sources);
+    }
+
+    /** Как чат называется в сводке директора. */
+    static String chatTitle(ChatEntity chat) {
+        if (ChatAccessService.isGeneral(chat)) {
+            return "Общий чат";
+        }
+
+        return chat.getName() == null || chat.getName().isBlank() ? "Группа" : chat.getName().trim();
+    }
+
+    /** Метка чата для модели: «Общий чат» или «Группа «Склад»». */
+    static String chatLabel(ChatEntity chat) {
+        return ChatAccessService.isGeneral(chat) ? "Общий чат" : "Группа «" + chatTitle(chat) + "»";
+    }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper SECTIONS_JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /** Разделы сводки по номерам чатов → JSON с chatId и названием. Неизвестные номера отбрасываются. */
+    static String sectionsJson(
+            List<AiSummaryProviderResponse.Section> sections,
+            List<AiSummaryProviderRequest.Chat> chats
+    ) {
+        if (sections == null || sections.isEmpty() || chats == null || chats.isEmpty()) {
+            return null;
+        }
+
+        Map<Integer, AiSummaryProviderRequest.Chat> byNumber = chats.stream()
+                .collect(Collectors.toMap(AiSummaryProviderRequest.Chat::number, chat -> chat, (a, b) -> a));
+        Map<Integer, AiDirectorSummaryResponse.Section> result = new LinkedHashMap<>();
+
+        for (AiSummaryProviderResponse.Section section : sections) {
+            AiSummaryProviderRequest.Chat chat = byNumber.get(section.chatNumber());
+
+            if (chat == null || section.summary() == null || section.summary().isBlank()) {
+                continue;
+            }
+
+            result.putIfAbsent(chat.number(), new AiDirectorSummaryResponse.Section(
+                    chat.chatId(), chat.name(), section.summary().trim()));
+        }
+
+        if (result.isEmpty()) {
+            return null;
+        }
+
+        try {
+            return SECTIONS_JSON.writeValueAsString(new ArrayList<>(result.values()));
+        } catch (Exception ex) {
+            log.warn("Failed to serialize AI summary sections", ex);
+            return null;
+        }
+    }
+
+    static List<AiDirectorSummaryResponse.Section> parseSections(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+
+        try {
+            return List.of(SECTIONS_JSON.readValue(json, AiDirectorSummaryResponse.Section[].class));
+        } catch (Exception ex) {
+            log.warn("Failed to read AI summary sections", ex);
+            return List.of();
+        }
     }
 
     /**
@@ -507,15 +613,18 @@ public class AiService {
     private List<AiProviderMessage> toProviderMessages(
             List<ChatMessageEntity> messages,
             int maxLength,
-            int mediaMaxLength
+            int mediaMaxLength,
+            Map<UUID, String> sources
     ) {
         Map<UUID, String> mediaTexts = loadMediaTexts(messages);
 
         return messages.stream()
                 .map(message -> {
                     String mediaText = mediaTexts.get(message.getId());
+                    String source = message.getChat() == null ? null : sources.get(message.getChat().getId());
 
-                    return toProviderMessage(message, mediaText, mediaText == null ? maxLength : mediaMaxLength);
+                    return toProviderMessage(message, mediaText, mediaText == null ? maxLength : mediaMaxLength,
+                            source == null ? "Общий чат" : source);
                 })
                 .toList();
     }
@@ -641,10 +750,11 @@ public class AiService {
     private AiProviderMessage toProviderMessage(
             ChatMessageEntity message,
             String mediaText,
-            int maxLength
+            int maxLength,
+            String source
     ) {
         return new AiProviderMessage(
-                "GENERAL_CHAT",
+                source,
                 buildAuthor(message),
                 truncateForAiContext(aiContent(message, mediaText), maxLength),
                 message.getCreatedAt() == null
@@ -697,7 +807,8 @@ public class AiService {
                 summary.getTitle(),
                 summary.getSummary(),
                 splitSummaryItems(summary.getItemsText()),
-                TimeUtils.toUtcOffset(summary.getGeneratedAt())
+                TimeUtils.toUtcOffset(summary.getGeneratedAt()),
+                parseSections(summary.getSectionsJson())
         );
     }
 

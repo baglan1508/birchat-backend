@@ -7,6 +7,7 @@ public record ChatAttachmentResponse(
         String fileName,
         String originalFileName,
         String contentType,
-        Long fileSize
+        Long fileSize,
+        Long durationMs
 ) {
 }

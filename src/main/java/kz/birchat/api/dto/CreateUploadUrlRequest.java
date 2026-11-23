@@ -21,7 +21,11 @@ public record CreateUploadUrlRequest(
         @Positive(message = "fileSize должен быть больше 0")
         Long fileSize,
 
-        /* Групповой чат, для которого загружается файл. null — файл компании. */
-        UUID chatId
+        /* Группа или личный чат, для которого загружается файл. null — файл компании. */
+        UUID chatId,
+
+        /* Длительность голосового или видео, мс (необязательно). */
+        @jakarta.validation.constraints.PositiveOrZero(message = "durationMs не может быть отрицательным")
+        Long durationMs
 ) {
 }

@@ -146,6 +146,9 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
      * пользователь мог его не допечатать. Спецсимволы tsquery в запросе безопасны:
      * plainto_tsquery воспринимает запрос как обычный текст.
      *
+     * chatId — только этот чат (строкой; пустая строка — все доступные чаты).
+     * Удалённые группы не ищутся.
+     *
      * Возвращает id (новые сверху), сами сообщения — {@link #findAllWithUserAndChatByIdIn}.
      */
     @Query(value = """
@@ -155,6 +158,8 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
         WHERE m.company_id = :companyId
           AND m.is_deleted = false
           AND m.content IS NOT NULL
+          AND ch.deleted_at IS NULL
+          AND (:chatId = '' OR m.chat_id = CAST(:chatId AS uuid))
           AND m.search_vector @@ CAST(
                 regexp_replace(
                     CAST(plainto_tsquery('russian', birchat.search_text(:query)) AS text),
@@ -179,6 +184,7 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
             @Param("userId") UUID userId,
             @Param("director") boolean director,
             @Param("query") String query,
+            @Param("chatId") String chatId,
             @Param("limit") int limit
     );
 
@@ -189,48 +195,69 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
         WHERE m.id IN :ids
         """)
     List<ChatMessageEntity> findAllWithUserAndChatByIdIn(@Param("ids") Collection<UUID> ids);
+    /**
+     * Контекст вопроса к AI: последние сообщения общего чата и групп, которые видит пользователь
+     * (директор — все группы). Личные чаты и удалённые группы в AI не попадают.
+     */
     @Query("""
         SELECT m FROM ChatMessageEntity m
         JOIN FETCH m.user u
         JOIN FETCH m.chat ch
         WHERE m.company.id = :companyId
-          AND ch.type = 'GENERAL'
+          AND ch.deletedAt IS NULL
+          AND (
+                ch.type = 'GENERAL'
+                OR (ch.type = 'GROUP' AND (
+                    :director = true
+                    OR EXISTS (
+                        SELECT cm.id FROM ChatMemberEntity cm
+                        WHERE cm.chat.id = ch.id AND cm.user.id = :userId
+                    )
+                ))
+          )
           AND m.isDeleted = false
           AND m.content IS NOT NULL
         ORDER BY m.createdAt DESC, m.id DESC
     """)
-    List<ChatMessageEntity> findLatestGeneralChatMessagesForAiContext(
+    List<ChatMessageEntity> findLatestMessagesForAiContext(
             @Param("companyId") UUID companyId,
+            @Param("userId") UUID userId,
+            @Param("director") boolean director,
             Pageable pageable
     );
+
+    /** Сообщения общего чата и всех групп компании за период — для сводки директора. */
     @Query("""
         SELECT m FROM ChatMessageEntity m
         JOIN FETCH m.user u
         JOIN FETCH m.chat ch
         WHERE m.company.id = :companyId
-          AND ch.type = 'GENERAL'
+          AND ch.type IN ('GENERAL', 'GROUP')
+          AND ch.deletedAt IS NULL
           AND m.isDeleted = false
           AND m.content IS NOT NULL
           AND m.createdAt >= :periodStart
           AND m.createdAt <= :periodEnd
         ORDER BY m.createdAt DESC, m.id DESC
     """)
-    List<ChatMessageEntity> findGeneralChatMessagesForAiSummary(
+    List<ChatMessageEntity> findCompanyMessagesForAiSummary(
             @Param("companyId") UUID companyId,
             @Param("periodStart") LocalDateTime periodStart,
             @Param("periodEnd") LocalDateTime periodEnd,
             Pageable pageable
     );
+
     @Query("""
     SELECT COUNT(m) FROM ChatMessageEntity m
     JOIN m.chat ch
     WHERE m.company.id = :companyId
-      AND ch.type = 'GENERAL'
+      AND ch.type IN ('GENERAL', 'GROUP')
+      AND ch.deletedAt IS NULL
       AND m.isDeleted = false
       AND m.content IS NOT NULL
       AND m.createdAt > :after
 """)
-    Long countGeneralChatMessagesAfterForAiSummary(
+    Long countCompanyMessagesAfterForAiSummary(
             @Param("companyId") UUID companyId,
             @Param("after") LocalDateTime after
     );

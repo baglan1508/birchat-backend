@@ -14,6 +14,7 @@ public record CompanyResponse(
         String roleLabel,
         String position,
         UUID generalChatId,
-        Boolean aiEnabled
+        Boolean aiEnabled,
+        Boolean membersCanCreateGroups
 ) {
 }

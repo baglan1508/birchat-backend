@@ -71,6 +71,73 @@ public class PushNotificationService {
     record Outgoing(String deviceToken, String environment, String payloadJson) {
     }
 
+    /** Последний бейдж, отправленный пользователю, — чтобы не слать тихий пуш с той же цифрой. */
+    private final Map<UUID, Integer> lastBadge = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Пользователь что-то прочитал: тихий пуш с новым бейджем на его устройства, чтобы цифра
+     * на иконке не висела, когда всё прочитано на другом телефоне. Ничего не бросает.
+     */
+    public void badgeChanged(UUID userId) {
+        if (userId == null || !pushSender.isConfigured()) {
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                deliverBadge(userId);
+            } catch (Exception ex) {
+                log.error("Badge push failed. userId={}", userId, ex);
+            }
+        });
+    }
+
+    void deliverBadge(UUID userId) {
+        TransactionTemplate readTx = new TransactionTemplate(transactionManager);
+        readTx.setReadOnly(true);
+
+        record Badge(List<DeviceTokenEntity> devices, int badge) {
+        }
+
+        Badge badge = readTx.execute(status -> {
+            List<DeviceTokenEntity> devices = deviceTokenRepository.findByUserIdIn(Set.of(userId));
+            return devices.isEmpty() ? null : new Badge(devices, unreadTotal(userId));
+        });
+
+        if (badge == null) {
+            return;
+        }
+
+        Integer previous = rememberBadge(userId, badge.badge());
+
+        if (previous != null && previous == badge.badge()) {
+            return;
+        }
+
+        String payload = toJson(Map.<String, Object>of("aps", Map.of("badge", badge.badge())));
+        List<String> invalidTokens = new ArrayList<>();
+
+        for (DeviceTokenEntity device : badge.devices()) {
+            if (pushSender.sendQuiet(device.getToken(), device.getEnvironment(), payload)
+                    == PushSender.Result.INVALID_TOKEN) {
+                invalidTokens.add(device.getToken());
+            }
+        }
+
+        if (!invalidTokens.isEmpty()) {
+            new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                    invalidTokens.forEach(deviceTokenRepository::deleteByTokenValue));
+        }
+    }
+
+    private Integer rememberBadge(UUID userId, int badge) {
+        if (lastBadge.size() > 50_000) {
+            lastBadge.clear();
+        }
+
+        return lastBadge.put(userId, badge);
+    }
+
     /** Вызывается после сохранения сообщения. Ничего не бросает. */
     public void messageCreated(UUID messageId) {
         if (messageId == null || !pushSender.isConfigured()) {
@@ -172,7 +239,11 @@ public class PushNotificationService {
         List<Outgoing> result = new ArrayList<>();
 
         for (DeviceTokenEntity device : devices) {
-            int badge = badges.computeIfAbsent(device.getUserId(), this::unreadTotal);
+            int badge = badges.computeIfAbsent(device.getUserId(), userId -> {
+                int total = unreadTotal(userId);
+                rememberBadge(userId, total);
+                return total;
+            });
             String body;
 
             if (mentioned.contains(device.getUserId())) {

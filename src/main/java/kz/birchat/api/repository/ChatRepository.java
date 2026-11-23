@@ -26,6 +26,7 @@ public interface ChatRepository extends JpaRepository<ChatEntity, UUID> {
     @Query("""
             SELECT c FROM ChatEntity c
             WHERE c.company.id = :companyId
+              AND c.deletedAt IS NULL
               AND (
                     c.type = 'GENERAL'
                     OR (:director = true AND c.type = 'GROUP')

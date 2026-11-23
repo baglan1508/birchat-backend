@@ -242,7 +242,7 @@ class AiServiceTest {
                 .thenReturn(Optional.of(summary));
 
         when(chatMessageRepository
-                .countGeneralChatMessagesAfterForAiSummary(
+                .countCompanyMessagesAfterForAiSummary(
                         companyId, now
                 ))
                 .thenReturn(0L);
@@ -299,12 +299,46 @@ class AiServiceTest {
         when(companyMemberRepository.existsByCompanyIdAndUserIdAndStatus(companyId, userId, "ACTIVE"))
                 .thenReturn(true);
         when(companyRepository.isAiEnabled(companyId)).thenReturn(true);
-        when(chatMessageRepository.findLatestGeneralChatMessagesForAiContext(eq(companyId), any()))
+        when(chatMessageRepository.findLatestMessagesForAiContext(eq(companyId), eq(userId), eq(false), any()))
                 .thenReturn(List.of());
 
         AiProvider provider = mock(AiProvider.class);
         when(aiProviderResolver.resolve()).thenReturn(provider);
         return provider;
+    }
+
+    @Test
+    void summarySectionsAreMappedToChatsByNumber() {
+        UUID generalId = UUID.randomUUID();
+        UUID groupId = UUID.randomUUID();
+        var chats = List.of(
+                new kz.birchat.api.ai.AiSummaryProviderRequest.Chat(1, generalId, "Общий чат"),
+                new kz.birchat.api.ai.AiSummaryProviderRequest.Chat(2, groupId, "Склад")
+        );
+
+        String json = AiService.sectionsJson(List.of(
+                new kz.birchat.api.ai.AiSummaryProviderResponse.Section(2, "Ждут поставку цемента"),
+                new kz.birchat.api.ai.AiSummaryProviderResponse.Section(7, "Чата с таким номером нет")
+        ), chats);
+
+        var sections = AiService.parseSections(json);
+        assertEquals(1, sections.size());
+        assertEquals(groupId, sections.get(0).chatId());
+        assertEquals("Склад", sections.get(0).name());
+        assertEquals("Ждут поставку цемента", sections.get(0).summary());
+        assertTrue(AiService.parseSections(null).isEmpty());
+    }
+
+    @Test
+    void chatLabelsForAi() {
+        kz.birchat.api.entity.ChatEntity general = new kz.birchat.api.entity.ChatEntity();
+        general.setType("GENERAL");
+        kz.birchat.api.entity.ChatEntity group = new kz.birchat.api.entity.ChatEntity();
+        group.setType("GROUP");
+        group.setName("Склад");
+
+        assertEquals("Общий чат", AiService.chatLabel(general));
+        assertEquals("Группа «Склад»", AiService.chatLabel(group));
     }
 
     @Test

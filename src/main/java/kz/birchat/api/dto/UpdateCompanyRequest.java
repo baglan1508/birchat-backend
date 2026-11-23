@@ -5,8 +5,10 @@ package kz.birchat.api.dto;
  * меняется только то, что передано.
  *
  * aiEnabled — согласие компании на обработку сообщений и файлов сторонним AI.
+ * membersCanCreateGroups — группы могут создавать все сотрудники (по умолчанию только директор).
  */
 public record UpdateCompanyRequest(
-        Boolean aiEnabled
+        Boolean aiEnabled,
+        Boolean membersCanCreateGroups
 ) {
 }
