@@ -32,7 +32,10 @@ import java.util.function.Supplier;
  *   message.updated  — message: сообщение после изменения;
  *   message.deleted  — messageId;
  *   chat.read        — userId, lastReadMessageId, lastReadMessageCreatedAt (кто-то прочитал чат);
- *   chat.renamed     — name.
+ *   chat.renamed     — name;
+ *   chat.pinned      — message: закреплённое сообщение или null;
+ *   chat.deleted     — группу удалили;
+ *   message.reactions — messageId, reactions: [{ emoji, count, userIds }].
  *
  * Получатели — все, кто сейчас в чате. Отправка — в фоне одним потоком, чтобы события шли по порядку
  * и запрос, вызвавший событие, не ждал.
@@ -73,7 +76,7 @@ public class RealtimeEventService {
                         .map(found -> found.getChat())
                         .orElse(null),
                 "message.created",
-                Map.of("message", message)
+                Map.of("message", message.withoutMine())
         );
     }
 
@@ -90,7 +93,7 @@ public class RealtimeEventService {
                         .map(found -> found.getChat())
                         .orElse(null),
                 "message.updated",
-                Map.of("message", message)
+                Map.of("message", message.withoutMine())
         );
     }
 
@@ -110,6 +113,38 @@ public class RealtimeEventService {
         fields.put("lastReadMessageCreatedAt", state.lastReadMessageCreatedAt());
 
         publish(() -> chatRepository.findById(state.chatId()).orElse(null), "chat.read", fields);
+    }
+
+    /** Реакции на сообщение изменились. */
+    public void messageReactions(UUID chatId, UUID messageId, java.util.List<kz.birchat.api.dto.ReactionSummary> reactions) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("messageId", messageId.toString());
+        fields.put("reactions", reactions);
+        publish(() -> chatRepository.findById(chatId).orElse(null), "message.reactions", fields);
+    }
+
+    /** Закреп изменился: message — закреплённое сообщение или null (закреп снят). */
+    public void chatPinned(UUID chatId, ChatMessageResponse message) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("message", message == null ? null : message.withoutMine());
+        publish(() -> chatRepository.findById(chatId).orElse(null), "chat.pinned", fields);
+    }
+
+    /** Группу удалили: событие тем, кто в ней был (сам чат участников уже не имеет). */
+    public void chatDeleted(UUID companyId, UUID chatId, Set<UUID> participants) {
+        if (registry.isEmpty() || participants == null || participants.isEmpty()) {
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                registry.send(participants, objectMapper.writeValueAsString(
+                        event("chat.deleted", companyId, chatId, Map.of())
+                ));
+            } catch (Exception ex) {
+                log.error("Realtime event chat.deleted failed", ex);
+            }
+        });
     }
 
     public void chatRenamed(UUID chatId, String name) {

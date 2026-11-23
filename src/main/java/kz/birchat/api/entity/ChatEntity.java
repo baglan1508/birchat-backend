@@ -37,4 +37,16 @@ public class ChatEntity {
     /** Только у личного чата: «меньший userId:больший userId» — один чат на пару людей в компании. */
     @Column(name = "direct_key")
     private String directKey;
+
+    /** Закреплённое сообщение (одно на чат). */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "pinned_message_id")
+    private ChatMessageEntity pinnedMessage;
+
+    /** Группу удалили: чат скрыт у всех, участники и директор получают 403. */
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @Column(name = "deleted_by")
+    private UUID deletedBy;
 }

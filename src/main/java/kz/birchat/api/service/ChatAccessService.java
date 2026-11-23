@@ -50,6 +50,13 @@ public class ChatAccessService {
         CompanyMemberEntity member = currentUserService.requireActiveMember(companyId, userId);
         ChatEntity chat = requireCompanyChat(companyId, chatId);
 
+        if (chat.getDeletedAt() != null) {
+            throw ApiException.forbidden(
+                    ApiErrorCode.CHAT_ACCESS_DENIED,
+                    "Группа удалена"
+            );
+        }
+
         if (!canAccess(chat, member, userId)) {
             throw ApiException.forbidden(
                     ApiErrorCode.CHAT_ACCESS_DENIED,
@@ -83,6 +90,55 @@ public class ChatAccessService {
         return chat;
     }
 
+    /** Ограничение по одному чату для поиска и списка файлов. */
+    public record ChatScope(String scope, UUID chatId, ChatEntity chat) {
+
+        public static final UUID NONE = new UUID(0L, 0L);
+        public static final String ALL = "ALL";
+        public static final String COMPANY = "COMPANY";
+        public static final String CHAT = "CHAT";
+
+        static ChatScope all() {
+            return new ChatScope(ALL, NONE, null);
+        }
+
+        /** Для поиска сообщений: id чата строкой или пустая строка (все чаты). */
+        public String messageChatFilter() {
+            return chat == null ? "" : chat.getId().toString();
+        }
+    }
+
+    /**
+     * chatId из запроса: пусто — все доступные чаты; "general" или id общего чата — общий чат
+     * (для файлов это файлы компании без чата); id группы или личного чата — только он
+     * (чужой — 403 CHAT_ACCESS_DENIED).
+     */
+    public ChatScope resolveScope(UUID companyId, String chatIdParam, UUID userId) {
+        if (chatIdParam == null || chatIdParam.isBlank()) {
+            return ChatScope.all();
+        }
+
+        ChatEntity chat;
+
+        if ("general".equalsIgnoreCase(chatIdParam.trim())) {
+            chat = requireGeneralChat(companyId);
+        } else {
+            UUID chatId;
+
+            try {
+                chatId = UUID.fromString(chatIdParam.trim());
+            } catch (IllegalArgumentException ex) {
+                throw ApiException.badRequest(ApiErrorCode.VALIDATION, "Некорректный chatId");
+            }
+
+            chat = requireReadableChat(companyId, chatId, userId);
+        }
+
+        return isGeneral(chat)
+                ? new ChatScope(ChatScope.COMPANY, ChatScope.NONE, chat)
+                : new ChatScope(ChatScope.CHAT, chat.getId(), chat);
+    }
+
     public ChatEntity requireCompanyChat(UUID companyId, UUID chatId) {
         return chatRepository.findById(chatId)
                 .filter(chat -> companyId.equals(chat.getCompany().getId()))
@@ -93,6 +149,10 @@ public class ChatAccessService {
     }
 
     public boolean canAccess(ChatEntity chat, CompanyMemberEntity member, UUID userId) {
+        if (chat.getDeletedAt() != null) {
+            return false;
+        }
+
         if (isGeneral(chat)) {
             return true;
         }
@@ -130,5 +190,17 @@ public class ChatAccessService {
 
     public static boolean isDirect(ChatEntity chat) {
         return ChatType.DIRECT.name().equals(chat.getType());
+    }
+
+    /**
+     * Управлять группой (переименовать, участники, удалить, закрепить): директор или создатель группы.
+     */
+    public static boolean canManageGroup(ChatEntity chat, CompanyMemberEntity member, UUID userId) {
+        if (!isGroup(chat) || chat.getDeletedAt() != null) {
+            return false;
+        }
+
+        return CurrentUserService.isDirector(member)
+                || (chat.getCreatedBy() != null && userId.equals(chat.getCreatedBy().getId()));
     }
 }

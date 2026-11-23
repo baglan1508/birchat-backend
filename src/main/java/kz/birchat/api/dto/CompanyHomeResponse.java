@@ -26,7 +26,8 @@ public record CompanyHomeResponse(
             Long messagesCount,
             Long unreadCount,
             String lastMessage,
-            OffsetDateTime lastMessageAt
+            OffsetDateTime lastMessageAt,
+            ChatMessageResponse pinnedMessage
     ) {
     }
 

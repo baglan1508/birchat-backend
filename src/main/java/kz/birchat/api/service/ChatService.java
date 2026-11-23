@@ -12,6 +12,7 @@ import kz.birchat.api.entity.ChatAttachmentEntity;
 import kz.birchat.api.entity.ChatEntity;
 import kz.birchat.api.entity.ChatMessageEntity;
 import kz.birchat.api.entity.ChatMessageMentionEntity;
+import kz.birchat.api.entity.ChatMessageReactionEntity;
 import kz.birchat.api.entity.CompanyMemberEntity;
 import kz.birchat.api.entity.ChatReadStateEntity;
 import kz.birchat.api.entity.CompanyFileEntity;
@@ -21,6 +22,7 @@ import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
 import kz.birchat.api.repository.ChatAttachmentRepository;
 import kz.birchat.api.repository.ChatMessageMentionRepository;
+import kz.birchat.api.repository.ChatMessageReactionRepository;
 import kz.birchat.api.repository.ChatMessageRepository;
 import kz.birchat.api.repository.CompanyMemberRepository;
 import kz.birchat.api.repository.ChatReadStateRepository;
@@ -65,6 +67,7 @@ public class ChatService {
     private final ChatMessageMentionRepository chatMessageMentionRepository;
     private final ChatMessageActionsService chatMessageActionsService;
     private final CompanyMemberRepository companyMemberRepository;
+    private final ChatMessageReactionRepository chatMessageReactionRepository;
 
     /** Сколько времени автор может изменить сообщение. */
     static final Duration EDIT_WINDOW = Duration.ofHours(48);
@@ -81,8 +84,20 @@ public class ChatService {
             UUID before,
             Integer limit
     ) {
+        return getGeneralChatMessages(companyId, userId, after, before, null, limit);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ChatMessageResponse> getGeneralChatMessages(
+            UUID companyId,
+            UUID userId,
+            UUID after,
+            UUID before,
+            UUID around,
+            Integer limit
+    ) {
         UUID chatId = chatAccessService.requireGeneralChat(companyId).getId();
-        return getMessages(companyId, chatId, userId, after, before, limit);
+        return getMessages(companyId, chatId, userId, after, before, around, limit);
     }
 
     @Transactional
@@ -126,19 +141,61 @@ public class ChatService {
             UUID before,
             Integer limit
     ) {
+        return getMessages(companyId, chatId, userId, after, before, null, limit);
+    }
+
+    /**
+     * Страница сообщений по возрастанию времени: последние; после after; до before;
+     * или вокруг around — половина до, само сообщение и остальное после (переход из поиска).
+     */
+    @Transactional(readOnly = true)
+    public List<ChatMessageResponse> getMessages(
+            UUID companyId,
+            UUID chatId,
+            UUID userId,
+            UUID after,
+            UUID before,
+            UUID around,
+            Integer limit
+    ) {
         ChatEntity chat = chatAccessService.requireReadableChat(companyId, chatId, userId);
 
-        if (after != null && before != null) {
+        int cursors = (after == null ? 0 : 1) + (before == null ? 0 : 1) + (around == null ? 0 : 1);
+
+        if (cursors > 1) {
             throw ApiException.badRequest(
                     ApiErrorCode.VALIDATION,
-                    "Нельзя одновременно использовать after и before"
+                    "Можно указать только один из after, before, around"
             );
         }
 
         int safeLimit = normalizeLimit(limit);
         List<ChatMessageEntity> messages;
 
-        if (after != null) {
+        if (around != null) {
+            ChatMessageEntity center = findMessageCursor(companyId, chat.getId(), around, "around");
+            int olderCount = safeLimit / 2;
+
+            List<ChatMessageEntity> older = olderCount == 0 ? new ArrayList<>() : new ArrayList<>(
+                    chatMessageRepository.findGeneralChatMessagesBefore(
+                            companyId, chat.getId(), center.getCreatedAt(), center.getId(),
+                            PageRequest.of(0, olderCount)));
+            Collections.reverse(older);
+
+            int newerCount = safeLimit - older.size() - 1;
+            List<ChatMessageEntity> newer = newerCount <= 0 ? List.of() :
+                    chatMessageRepository.findGeneralChatMessagesAfter(
+                            companyId, chat.getId(), center.getCreatedAt(), center.getId(),
+                            PageRequest.of(0, newerCount));
+
+            messages = new ArrayList<>(older);
+
+            if (!Boolean.TRUE.equals(center.getIsDeleted())) {
+                messages.add(center);
+            }
+
+            messages.addAll(newer);
+        } else if (after != null) {
             ChatMessageEntity afterMessage = findMessageCursor(companyId, chat.getId(), after, "after");
 
             messages = chatMessageRepository.findGeneralChatMessagesAfter(
@@ -170,7 +227,7 @@ public class ChatService {
             Collections.reverse(messages);
         }
 
-        return toResponses(messages);
+        return toResponses(messages, userId);
     }
 
     @Transactional
@@ -219,7 +276,7 @@ public class ChatService {
 
         saveMentions(saved, companyId, chat, userId, request.mentions(), now);
 
-        return toResponses(List.of(saved)).get(0);
+        return toResponses(List.of(saved), userId).get(0);
     }
 
     /**
@@ -268,7 +325,7 @@ public class ChatService {
             saveMentions(saved, companyId, chat, userId, request.mentions(), now);
         }
 
-        return toResponses(List.of(saved)).get(0);
+        return toResponses(List.of(saved), userId).get(0);
     }
 
     /**
@@ -290,7 +347,7 @@ public class ChatService {
                 PageRequest.of(0, MAX_UPDATED_MESSAGES)
         );
 
-        return new UpdatedMessagesResponse(toResponses(edited), TimeUtils.toUtcOffset(now));
+        return new UpdatedMessagesResponse(toResponses(edited, userId), TimeUtils.toUtcOffset(now));
     }
 
     @Transactional
@@ -324,7 +381,7 @@ public class ChatService {
         chatAttachmentRepository.save(newAttachment(chat, savedMessage, file, now));
         saveMentions(savedMessage, companyId, chat, userId, request.mentions(), now);
 
-        return toResponses(List.of(savedMessage)).get(0);
+        return toResponses(List.of(savedMessage), userId).get(0);
     }
 
     @Transactional
@@ -610,6 +667,11 @@ public class ChatService {
      * по запросу на вид, а не на каждое сообщение.
      */
     List<ChatMessageResponse> toResponses(List<ChatMessageEntity> messages) {
+        return toResponses(messages, null);
+    }
+
+    /** viewerId — кто смотрит: для отметки «моя реакция» (null — без отметок). */
+    public List<ChatMessageResponse> toResponses(List<ChatMessageEntity> messages, UUID viewerId) {
         if (messages.isEmpty()) {
             return List.of();
         }
@@ -656,6 +718,7 @@ public class ChatService {
                         ));
 
         Map<UUID, List<ChatMessageResponse.Mention>> mentionsByMessageId = loadMentions(messages, messageIds);
+        Map<UUID, List<ChatMessageResponse.Reaction>> reactionsByMessageId = loadReactions(messageIds, viewerId);
 
         return messages.stream()
                 .map(message -> toResponse(
@@ -665,7 +728,39 @@ public class ChatService {
                                 : toReplyTo(referenced.get(message.getReplyToMessage().getId()), replyFileNames),
                         message.getForwardedFromMessage() == null ? null
                                 : toForwardedFrom(referenced.get(message.getForwardedFromMessage().getId())),
-                        mentionsByMessageId.getOrDefault(message.getId(), List.of())
+                        mentionsByMessageId.getOrDefault(message.getId(), List.of()),
+                        reactionsByMessageId.getOrDefault(message.getId(), List.of())
+                ))
+                .toList();
+    }
+
+    /** Реакции пачкой: эмодзи в порядке первой реакции, со счётчиком и отметкой «моя». */
+    private Map<UUID, List<ChatMessageResponse.Reaction>> loadReactions(Collection<UUID> messageIds, UUID viewerId) {
+        List<ChatMessageReactionEntity> reactions = chatMessageReactionRepository.findByMessageIds(messageIds);
+
+        if (reactions.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<UUID, List<ChatMessageResponse.Reaction>> result = new HashMap<>();
+
+        reactions.stream()
+                .collect(Collectors.groupingBy(r -> r.getMessage().getId(), java.util.LinkedHashMap::new, Collectors.toList()))
+                .forEach((messageId, list) -> result.put(messageId, summarizeReactions(list, viewerId)));
+
+        return result;
+    }
+
+    static List<ChatMessageResponse.Reaction> summarizeReactions(List<ChatMessageReactionEntity> reactions, UUID viewerId) {
+        Map<String, List<ChatMessageReactionEntity>> byEmoji = reactions.stream()
+                .collect(Collectors.groupingBy(ChatMessageReactionEntity::getEmoji, java.util.LinkedHashMap::new, Collectors.toList()));
+
+        return byEmoji.entrySet().stream()
+                .map(entry -> new ChatMessageResponse.Reaction(
+                        entry.getKey(),
+                        entry.getValue().size(),
+                        viewerId != null && entry.getValue().stream()
+                                .anyMatch(r -> viewerId.equals(r.getUser().getId()))
                 ))
                 .toList();
     }
@@ -749,7 +844,8 @@ public class ChatService {
             List<ChatAttachmentResponse> attachments,
             ChatMessageResponse.ReplyTo replyTo,
             ChatMessageResponse.ForwardedFrom forwardedFrom,
-            List<ChatMessageResponse.Mention> mentions
+            List<ChatMessageResponse.Mention> mentions,
+            List<ChatMessageResponse.Reaction> reactions
     ) {
         UserEntity user = message.getUser();
 
@@ -765,7 +861,8 @@ public class ChatService {
                 replyTo,
                 forwardedFrom,
                 TimeUtils.toUtcOffset(message.getEditedAt()),
-                mentions
+                mentions,
+                reactions
         );
     }
 
@@ -777,7 +874,8 @@ public class ChatService {
                 file.getFileName(),
                 file.getOriginalFileName(),
                 file.getContentType(),
-                file.getFileSize()
+                file.getFileSize(),
+                file.getDurationMs()
         );
     }
 }

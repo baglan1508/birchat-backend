@@ -21,13 +21,17 @@ public class SearchController {
             @PathVariable UUID companyId,
             @CurrentUser UUID userId,
             @RequestParam String query,
-            @RequestParam(defaultValue = "20") Integer limit
+            @RequestParam(defaultValue = "20") Integer limit,
+            @RequestParam(required = false) String chatId,
+            @RequestParam(required = false) String type
     ) {
         return searchService.search(
                 companyId,
                 userId,
                 query,
-                limit
+                limit,
+                chatId,
+                type
         );
     }
 }

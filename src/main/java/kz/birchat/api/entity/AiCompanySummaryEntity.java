@@ -46,4 +46,8 @@ public class AiCompanySummaryEntity {
 
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    /** Разбивка по чатам: JSON [{ "chatId", "name", "summary" }]; у старых сводок — null. */
+    @Column(name = "sections_json")
+    private String sectionsJson;
 }

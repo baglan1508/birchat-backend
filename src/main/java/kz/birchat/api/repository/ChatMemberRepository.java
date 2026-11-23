@@ -51,4 +51,8 @@ public interface ChatMemberRepository extends JpaRepository<ChatMemberEntity, UU
               )
             """)
     int deleteFromCompanyGroups(@Param("companyId") UUID companyId, @Param("userId") UUID userId);
+
+    @Modifying
+    @Query("DELETE FROM ChatMemberEntity cm WHERE cm.chat.id = :chatId")
+    int deleteByChatId(@Param("chatId") UUID chatId);
 }

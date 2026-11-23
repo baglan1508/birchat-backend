@@ -11,6 +11,7 @@ public record ChatDetailsResponse(
         UUID createdBy,
         OffsetDateTime createdAt,
         Boolean canManage,
-        List<ChatMemberResponse> members
+        List<ChatMemberResponse> members,
+        ChatMessageResponse pinnedMessage
 ) {
 }

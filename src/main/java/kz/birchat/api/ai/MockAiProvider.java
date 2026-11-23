@@ -50,14 +50,31 @@ public class MockAiProvider implements AiProvider {
 
         return new AiSummaryProviderResponse(
                 "Сводка за сегодня",
-                "AI mock: тестовая сводка по сообщениям общего чата.",
+                "AI mock: тестовая сводка по сообщениям общего чата и групп.",
                 List.of(
                         "Количество сообщений в контексте: " + contextMessagesCount,
                         "Период: " + request.periodStart() + " — " + request.periodEnd(),
                         "Реальная сводка будет сформирована при AI_PROVIDER=glm"
                 ),
-                MODEL
+                MODEL,
+                request.chats() == null ? List.of() : request.chats().stream()
+                        .map(chat -> new AiSummaryProviderResponse.Section(
+                                chat.number(),
+                                "AI mock: сообщений в «" + chat.name() + "»: " + countInChat(request, chat.number())
+                        ))
+                        .toList()
         );
+    }
+
+    private static long countInChat(AiSummaryProviderRequest request, int number) {
+        if (request.contextMessages() == null) {
+            return 0;
+        }
+
+        String prefix = "#" + number + " ";
+        return request.contextMessages().stream()
+                .filter(message -> message.source() != null && message.source().startsWith(prefix))
+                .count();
     }
 
     /** Последние сообщения контекста — чтобы на тесте было видно, что именно получил AI. */
@@ -68,7 +85,7 @@ public class MockAiProvider implements AiProvider {
 
         return messages.stream()
                 .skip(Math.max(0, messages.size() - 5))
-                .map(message -> "- " + message.author() + ": " + message.content())
+                .map(message -> "- (" + message.source() + ") " + message.author() + ": " + message.content())
                 .collect(java.util.stream.Collectors.joining("\n"));
     }
 

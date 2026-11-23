@@ -30,9 +30,12 @@ public class CompanyFileController {
     public List<CompanyFileResponse> getCompanyFiles(
             @PathVariable UUID companyId,
             @CurrentUser UUID userId,
-            @RequestParam(required = false) Integer limit
+            @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) String chatId,
+            @RequestParam(required = false) String kind,
+            @RequestParam(required = false) UUID before
     ) {
-        return companyFileService.getCompanyFiles(companyId, userId, limit);
+        return companyFileService.getCompanyFiles(companyId, userId, limit, chatId, kind, before);
     }
 
     @GetMapping("/{fileId}")

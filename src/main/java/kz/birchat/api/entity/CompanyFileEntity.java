@@ -82,4 +82,8 @@ public class CompanyFileEntity {
 
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    /** Длительность голосового или видео от приложения, мс. */
+    @Column(name = "duration_ms")
+    private Long durationMs;
 }

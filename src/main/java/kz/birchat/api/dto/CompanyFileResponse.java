@@ -14,6 +14,7 @@ public record CompanyFileResponse(
         Long fileSize,
         String fileUrl,
         OffsetDateTime createdAt,
-        UUID chatId
+        UUID chatId,
+        Long durationMs
 ) {
 }

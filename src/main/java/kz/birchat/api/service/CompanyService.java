@@ -32,6 +32,7 @@ public class CompanyService {
     private final ChatRepository chatRepository;
     private final ChatMessageRepository chatMessageRepository;
     private final ChatReadStateRepository chatReadStateRepository;
+    private final ChatService chatService;
 
     /**
      * Компании пользователя. Заодно он «заходит» во все компании, куда его добавили:
@@ -104,6 +105,10 @@ public class CompanyService {
 
         if (request != null && request.aiEnabled() != null) {
             company.setAiEnabled(request.aiEnabled());
+        }
+
+        if (request != null && request.membersCanCreateGroups() != null) {
+            company.setMembersCanCreateGroups(request.membersCanCreateGroups());
         }
 
         company.setUpdatedAt(TimeUtils.utcNow());
@@ -191,7 +196,11 @@ public class CompanyService {
                         messagesCount,
                         unreadCount,
                         lastMessage,
-                        lastMessageAt
+                        lastMessageAt,
+                        generalChat.getPinnedMessage() == null
+                                || Boolean.TRUE.equals(generalChat.getPinnedMessage().getIsDeleted())
+                                ? null
+                                : chatService.toResponses(List.of(generalChat.getPinnedMessage()), userId).get(0)
                 ),
                 new CompanyHomeResponse.AiDirectorInfo(
                         aiDirectorAvailable,
@@ -261,7 +270,8 @@ public class CompanyService {
                 directorRole.getName(),
                 "Директор",
                 generalChat.getId(),
-                savedCompany.isAiEnabled()
+                savedCompany.isAiEnabled(),
+                savedCompany.isMembersCanCreateGroups()
         );
     }
 
@@ -287,7 +297,8 @@ public class CompanyService {
                 chatRepository.findByCompanyIdAndType(company.getId(), "GENERAL")
                         .map(ChatEntity::getId)
                         .orElse(null),
-                company.isAiEnabled()
+                company.isAiEnabled(),
+                company.isMembersCanCreateGroups()
         );
     }
 

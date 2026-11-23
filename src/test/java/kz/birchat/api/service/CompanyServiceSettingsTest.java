@@ -60,7 +60,7 @@ class CompanyServiceSettingsTest {
         CompanyEntity company = company(false);
         mockMember("DIRECTOR", company);
 
-        CompanyResponse response = companyService.updateCompany(companyId, userId, new UpdateCompanyRequest(true));
+        CompanyResponse response = companyService.updateCompany(companyId, userId, new UpdateCompanyRequest(true, null));
 
         assertTrue(company.isAiEnabled());
         assertTrue(response.aiEnabled());
@@ -72,8 +72,20 @@ class CompanyServiceSettingsTest {
         CompanyEntity company = company(true);
         mockMember("DIRECTOR", company);
 
-        CompanyResponse response = companyService.updateCompany(companyId, userId, new UpdateCompanyRequest(null));
+        CompanyResponse response = companyService.updateCompany(companyId, userId, new UpdateCompanyRequest(null, null));
 
+        assertTrue(response.aiEnabled());
+    }
+
+    @Test
+    void directorLetsEmployeesCreateGroups() {
+        CompanyEntity company = company(true);
+        mockMember("DIRECTOR", company);
+
+        CompanyResponse response = companyService.updateCompany(companyId, userId, new UpdateCompanyRequest(null, true));
+
+        assertTrue(company.isMembersCanCreateGroups());
+        assertTrue(response.membersCanCreateGroups());
         assertTrue(response.aiEnabled());
     }
 
@@ -83,7 +95,7 @@ class CompanyServiceSettingsTest {
         mockMember("EMPLOYEE", company);
 
         ApiException exception = assertThrows(ApiException.class,
-                () -> companyService.updateCompany(companyId, userId, new UpdateCompanyRequest(true)));
+                () -> companyService.updateCompany(companyId, userId, new UpdateCompanyRequest(true, null)));
 
         assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
         assertEquals(ApiErrorCode.FORBIDDEN, exception.getCode());

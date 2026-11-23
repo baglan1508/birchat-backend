@@ -62,6 +62,8 @@ class ChatServiceMessageFeaturesTest {
     private ChatMessageActionsService chatMessageActionsService;
     @Mock
     private CompanyMemberRepository companyMemberRepository;
+    @Mock
+    private kz.birchat.api.repository.ChatMessageReactionRepository chatMessageReactionRepository;
 
     @InjectMocks
     private ChatService chatService;
@@ -276,5 +278,64 @@ class ChatServiceMessageFeaturesTest {
         message.setIsDeleted(false);
         message.setCreatedAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(5));
         return message;
+    }
+
+    @Test
+    void reactionsAreCountedAndMarkedForViewer() {
+        UUID colleague = UUID.randomUUID();
+        ChatMessageEntity message = message(chat, author, "Готово");
+        kz.birchat.api.entity.ChatMessageReactionEntity mine = reaction(message, authorId, "👍");
+        kz.birchat.api.entity.ChatMessageReactionEntity theirs = reaction(message, colleague, "👍");
+        kz.birchat.api.entity.ChatMessageReactionEntity heart = reaction(message, UUID.randomUUID(), "❤️");
+        when(chatMessageReactionRepository.findByMessageIds(List.of(message.getId())))
+                .thenReturn(List.of(mine, theirs, heart));
+
+        ChatMessageResponse response = chatService.toResponses(List.of(message), authorId).get(0);
+
+        assertEquals(2, response.reactions().size());
+        assertEquals("👍", response.reactions().get(0).emoji());
+        assertEquals(2, response.reactions().get(0).count());
+        assertTrue(response.reactions().get(0).mine());
+        assertFalse(response.reactions().get(1).mine());
+        assertFalse(response.withoutMine().reactions().get(0).mine());
+    }
+
+    @Test
+    void aroundReturnsHalfBeforeTargetAndRestAfter() {
+        ChatMessageEntity target = message(chat, author, "Нашли в поиске");
+        when(chatAccessService.requireReadableChat(companyId, chat.getId(), authorId)).thenReturn(chat);
+        when(chatMessageRepository.findById(target.getId())).thenReturn(Optional.of(target));
+        ChatMessageEntity older1 = message(chat, author, "старее 1");
+        ChatMessageEntity older2 = message(chat, author, "старее 2");
+        ChatMessageEntity newer = message(chat, author, "новее");
+        // до — по убыванию времени, как отдаёт база
+        when(chatMessageRepository.findGeneralChatMessagesBefore(eq(companyId), eq(chat.getId()), any(), eq(target.getId()), any()))
+                .thenReturn(List.of(older2, older1));
+        when(chatMessageRepository.findGeneralChatMessagesAfter(eq(companyId), eq(chat.getId()), any(), eq(target.getId()), any()))
+                .thenReturn(List.of(newer));
+
+        List<ChatMessageResponse> page = chatService.getMessages(companyId, chat.getId(), authorId, null, null, target.getId(), 4);
+
+        assertEquals(List.of("старее 1", "старее 2", "Нашли в поиске", "новее"),
+                page.stream().map(ChatMessageResponse::text).toList());
+    }
+
+    @Test
+    void aroundCannotBeCombinedWithAfter() {
+        when(chatAccessService.requireReadableChat(companyId, chat.getId(), authorId)).thenReturn(chat);
+
+        ApiException error = assertThrows(ApiException.class, () -> chatService.getMessages(
+                companyId, chat.getId(), authorId, UUID.randomUUID(), null, UUID.randomUUID(), 10));
+
+        assertEquals(ApiErrorCode.VALIDATION, error.getCode());
+    }
+
+    private kz.birchat.api.entity.ChatMessageReactionEntity reaction(ChatMessageEntity message, UUID userId, String emoji) {
+        kz.birchat.api.entity.ChatMessageReactionEntity reaction = new kz.birchat.api.entity.ChatMessageReactionEntity();
+        reaction.setId(UUID.randomUUID());
+        reaction.setMessage(message);
+        reaction.setUser(user(userId, "Кто-то"));
+        reaction.setEmoji(emoji);
+        return reaction;
     }
 }

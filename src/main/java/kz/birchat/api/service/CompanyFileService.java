@@ -77,15 +77,46 @@ public class CompanyFileService {
 
     @Transactional(readOnly = true)
     public List<CompanyFileResponse> getCompanyFiles(UUID companyId, UUID userId, Integer limit) {
+        return getCompanyFiles(companyId, userId, limit, null, null, null);
+    }
+
+    /**
+     * Файлы, новые сверху.
+     *
+     * @param chatId только этот чат ("general" — файлы компании без чата)
+     * @param kind   media (фото и видео), voice (аудио), documents (остальное); пусто — все
+     * @param before постранично: файлы старше этого файла
+     */
+    @Transactional(readOnly = true)
+    public List<CompanyFileResponse> getCompanyFiles(
+            UUID companyId,
+            UUID userId,
+            Integer limit,
+            String chatId,
+            String kind,
+            UUID before
+    ) {
         CompanyMemberEntity member = checkActiveMember(companyId, userId);
 
         int safeLimit = normalizeLimit(limit);
+        String fileKind = normalizeKind(kind);
+        ChatAccessService.ChatScope scope = chatAccessService.resolveScope(companyId, chatId, userId);
+
+        CompanyFileEntity cursor = before == null ? null : companyFileRepository.findById(before)
+                .filter(item -> companyId.equals(item.getCompany().getId()))
+                .orElseThrow(() -> ApiException.notFound(ApiErrorCode.FILE_NOT_FOUND, "Файл before не найден"));
 
         return companyFileRepository
                 .findAccessibleFiles(
                         companyId,
                         userId,
                         CurrentUserService.isDirector(member),
+                        scope.scope(),
+                        scope.chatId(),
+                        fileKind,
+                        cursor != null,
+                        cursor == null ? EPOCH : cursor.getCreatedAt(),
+                        cursor == null ? ChatAccessService.ChatScope.NONE : cursor.getId(),
                         PageRequest.of(0, safeLimit)
                 )
                 .stream()
@@ -134,6 +165,22 @@ public class CompanyFileService {
                 ));
     }
 
+    private static final java.time.LocalDateTime EPOCH = java.time.LocalDateTime.of(1970, 1, 1, 0, 0);
+
+    static String normalizeKind(String kind) {
+        if (kind == null || kind.isBlank()) {
+            return "ALL";
+        }
+
+        String value = kind.trim().toUpperCase();
+
+        if (!value.equals("MEDIA") && !value.equals("VOICE") && !value.equals("DOCUMENTS")) {
+            throw ApiException.badRequest(ApiErrorCode.VALIDATION, "kind: media, voice или documents");
+        }
+
+        return value;
+    }
+
     private int normalizeLimit(Integer limit) {
         if (limit == null) {
             return 50;
@@ -161,7 +208,8 @@ public class CompanyFileService {
                 file.getFileSize(),
                 file.getFileUrl(),
                 TimeUtils.toUtcOffset(file.getCreatedAt()),
-                file.getChat() == null ? null : file.getChat().getId()
+                file.getChat() == null ? null : file.getChat().getId(),
+                file.getDurationMs()
         );
     }
     @Transactional
@@ -178,7 +226,7 @@ public class CompanyFileService {
 
         if (chatId != null) {
             ChatEntity target = chatAccessService.requireReadableChat(companyId, chatId, userId);
-            chat = ChatAccessService.isGroup(target) ? target : null;
+            chat = ChatAccessService.isGroup(target) || ChatAccessService.isDirect(target) ? target : null;
         }
 
         CompanyEntity company = companyRepository.findById(companyId)
@@ -263,7 +311,7 @@ public class CompanyFileService {
 
         if (request.chatId() != null) {
             ChatEntity target = chatAccessService.requireReadableChat(companyId, request.chatId(), userId);
-            chat = ChatAccessService.isGroup(target) ? target : null;
+            chat = ChatAccessService.isGroup(target) || ChatAccessService.isDirect(target) ? target : null;
         }
 
         CompanyEntity company = companyRepository.findById(companyId)
@@ -289,6 +337,7 @@ public class CompanyFileService {
         entity.setOriginalFileName(originalFileName);
         entity.setContentType(contentType);
         entity.setFileSize(request.fileSize());
+        entity.setDurationMs(request.durationMs());
         entity.setStorageKey(storageKey);
         entity.setFileUrl(supabaseStorageService.objectUrl(storageKey));
         entity.setStatus(STATUS_PENDING);

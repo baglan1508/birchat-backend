@@ -110,4 +110,24 @@ class GlmAiProviderTest {
 
         assertNull(form.getFirst("prompt"));
     }
+
+    @Test
+    void summarySectionsAreParsedByChatNumber() {
+        AiSummaryProviderResponse summary = GlmAiProvider.parseSummaryResponse("""
+                TITLE: Сводка за сегодня
+                SUMMARY: Обсуждали поставки и оплату.
+                ITEMS:
+                - Цемент приедет в пятницу
+                SECTION #1: В общем чате — график на неделю.
+                SECTION #2: На складе ждут цемент,
+                водитель уточнит время.
+                """, MODEL);
+
+        assertEquals("Обсуждали поставки и оплату.", summary.summary());
+        assertEquals(List.of("Цемент приедет в пятницу"), summary.items());
+        assertEquals(2, summary.sections().size());
+        assertEquals(1, summary.sections().get(0).chatNumber());
+        assertEquals("В общем чате — график на неделю.", summary.sections().get(0).summary());
+        assertEquals("На складе ждут цемент, водитель уточнит время.", summary.sections().get(1).summary());
+    }
 }
