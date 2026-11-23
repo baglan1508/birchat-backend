@@ -81,7 +81,7 @@ class ChatManagementServiceTest {
 
     @Test
     void cannotAddPeopleFromOutsideTheCompany() {
-        when(currentUserService.requireDirector(companyId, directorId))
+        when(currentUserService.requireActiveMember(companyId, directorId))
                 .thenReturn(companyMember(directorId, "DIRECTOR"));
         when(companyMemberRepository.findByCompanyIdAndStatusOrderByJoinedAtAsc(companyId, "ACTIVE"))
                 .thenReturn(List.of(companyMember(directorId, "DIRECTOR")));
