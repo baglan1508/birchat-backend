@@ -7,6 +7,7 @@ import kz.birchat.api.dto.ChatReadStateResponse;
 import kz.birchat.api.entity.ChatEntity;
 import kz.birchat.api.repository.ChatMessageRepository;
 import kz.birchat.api.repository.ChatRepository;
+import kz.birchat.api.repository.CompanyMemberRepository;
 import kz.birchat.api.service.ChatMessageActionsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -44,6 +45,7 @@ public class RealtimeEventService {
     private final ChatRepository chatRepository;
     private final ChatMessageRepository chatMessageRepository;
     private final ChatMessageActionsService chatMessageActionsService;
+    private final CompanyMemberRepository companyMemberRepository;
     private final PlatformTransactionManager transactionManager;
     private final ObjectMapper objectMapper;
 
@@ -94,6 +96,60 @@ public class RealtimeEventService {
 
     public void chatRenamed(UUID chatId, String name) {
         publish(() -> chatRepository.findById(chatId).orElse(null), "chat.renamed", Map.of("name", name));
+    }
+
+    /**
+     * Сотрудника убрали из компании: ему — company.removed (приложение возвращает к списку компаний),
+     * остальным сотрудникам — member.removed. У событий компании нет chatId.
+     */
+    public void memberRemoved(UUID companyId, UUID userId) {
+        if (registry.isEmpty()) {
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                deliverMemberRemoved(companyId, userId);
+            } catch (Exception ex) {
+                log.error("Realtime event member.removed failed", ex);
+            }
+        });
+    }
+
+    void deliverMemberRemoved(UUID companyId, UUID userId) throws Exception {
+        registry.send(Set.of(userId), objectMapper.writeValueAsString(
+                companyEvent("company.removed", companyId, Map.of())
+        ));
+
+        Set<UUID> colleagues = activeMemberIds(companyId);
+        colleagues.remove(userId);
+
+        if (!colleagues.isEmpty()) {
+            registry.send(colleagues, objectMapper.writeValueAsString(
+                    companyEvent("member.removed", companyId, Map.of("userId", userId.toString()))
+            ));
+        }
+    }
+
+    private Set<UUID> activeMemberIds(UUID companyId) {
+        TransactionTemplate readTx = new TransactionTemplate(transactionManager);
+        readTx.setReadOnly(true);
+
+        Set<UUID> ids = readTx.execute(status -> companyMemberRepository
+                .findByCompanyIdAndStatusOrderByJoinedAtAsc(companyId, "ACTIVE")
+                .stream()
+                .map(member -> member.getUser().getId())
+                .collect(java.util.stream.Collectors.toCollection(java.util.HashSet::new)));
+
+        return ids == null ? new java.util.HashSet<>() : ids;
+    }
+
+    static Map<String, Object> companyEvent(String type, UUID companyId, Map<String, Object> fields) {
+        Map<String, Object> event = new LinkedHashMap<>();
+        event.put("type", type);
+        event.put("companyId", companyId.toString());
+        event.putAll(fields);
+        return event;
     }
 
     private void publish(Supplier<ChatEntity> chatLoader, String type, Map<String, Object> fields) {

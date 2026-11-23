@@ -3,6 +3,7 @@ package kz.birchat.api.controller;
 import jakarta.validation.Valid;
 import kz.birchat.api.dto.CreateEmployeeRequest;
 import kz.birchat.api.dto.EmployeeResponse;
+import kz.birchat.api.realtime.RealtimeEventService;
 import kz.birchat.api.service.EmployeeService;
 import kz.birchat.api.auth.CurrentUser;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,7 @@ import java.util.UUID;
 public class EmployeeController {
 
     private final EmployeeService employeeService;
+    private final RealtimeEventService realtimeEventService;
 
     @GetMapping
     public List<EmployeeResponse> getEmployees(
@@ -35,5 +37,17 @@ public class EmployeeController {
             @Valid @RequestBody CreateEmployeeRequest request
     ) {
         return employeeService.addEmployee(companyId, actorUserId, request);
+    }
+
+    /** Убрать сотрудника из компании (только директор). */
+    @DeleteMapping("/{employeeUserId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void removeEmployee(
+            @PathVariable UUID companyId,
+            @PathVariable UUID employeeUserId,
+            @CurrentUser UUID actorUserId
+    ) {
+        employeeService.removeEmployee(companyId, actorUserId, employeeUserId);
+        realtimeEventService.memberRemoved(companyId, employeeUserId);
     }
 }

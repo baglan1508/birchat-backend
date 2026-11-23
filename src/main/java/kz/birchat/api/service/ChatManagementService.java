@@ -283,12 +283,14 @@ public class ChatManagementService {
     }
 
     private ChatMemberResponse toMember(UserEntity user, CompanyMemberEntity membership, LocalDateTime addedAt) {
+        MemberProfile profile = MemberProfile.of(user, membership);
+
         return new ChatMemberResponse(
                 user.getId(),
-                user.getFullName(),
-                user.getDisplayName(),
-                user.getInitials(),
-                user.getAvatarUrl(),
+                profile.fullName(),
+                profile.displayName(),
+                profile.initials(),
+                profile.avatarUrl(),
                 membership.getRole() == null ? null : membership.getRole().getCode(),
                 membership.getPosition(),
                 TimeUtils.toUtcOffset(addedAt)

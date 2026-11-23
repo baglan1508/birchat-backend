@@ -36,4 +36,16 @@ public class CompanyMemberEntity {
 
     @Column(name = "joined_at")
     private LocalDateTime joinedAt;
+
+    /** Имя, под которым директор добавил сотрудника. Показывается коллегам, пока он не зашёл в компанию. */
+    @Column(name = "invited_name")
+    private String invitedName;
+
+    /** Когда сотрудник впервые получил компанию в своём списке (GET /companies/my). null — ещё не заходил. */
+    @Column(name = "accepted_at")
+    private LocalDateTime acceptedAt;
+
+    public boolean isPending() {
+        return acceptedAt == null;
+    }
 }

@@ -103,6 +103,58 @@ class AiServiceTest {
     }
 
     @Test
+    void askIsRejectedWhileCompanyAiIsOff() {
+        UUID userId = UUID.randomUUID();
+        when(companyMemberRepository.existsByCompanyIdAndUserIdAndStatus(companyId, userId, "ACTIVE"))
+                .thenReturn(true);
+        when(companyRepository.isAiEnabled(companyId)).thenReturn(false);
+
+        ApiException exception = assertThrows(ApiException.class,
+                () -> aiService.ask(companyId, userId, new AiAskRequest("Что нового?")));
+
+        assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
+        assertEquals(ApiErrorCode.AI_DISABLED, exception.getCode());
+        verifyNoInteractions(aiProviderResolver, aiThreadRepository, aiMessageRepository, chatMessageRepository);
+    }
+
+    @Test
+    void outsiderGetsNotAMemberBeforeAiDisabled() {
+        mockOutsider();
+
+        ApiException exception = assertThrows(ApiException.class,
+                () -> aiService.requireAskAllowed(companyId, outsiderId));
+
+        assertEquals(ApiErrorCode.NOT_A_MEMBER, exception.getCode());
+        verifyNoInteractions(companyRepository);
+    }
+
+    @Test
+    void directorSummaryIsRejectedWhileCompanyAiIsOff() {
+        UUID directorId = UUID.randomUUID();
+        CompanyMemberEntity member = mock(CompanyMemberEntity.class, RETURNS_DEEP_STUBS);
+        when(member.getRole().getCode()).thenReturn("DIRECTOR");
+        when(companyMemberRepository.findByCompanyIdAndUserIdAndStatus(companyId, directorId, "ACTIVE"))
+                .thenReturn(Optional.of(member));
+        when(companyRepository.isAiEnabled(companyId)).thenReturn(false);
+
+        ApiException exception = assertThrows(ApiException.class,
+                () -> aiService.getTodayDirectorSummary(companyId, directorId));
+
+        assertEquals(ApiErrorCode.AI_DISABLED, exception.getCode());
+        verifyNoInteractions(aiProviderResolver, aiCompanySummaryRepository);
+    }
+
+    @Test
+    void scheduledSummariesSkipCompaniesWithoutAiConsent() {
+        when(companyRepository.findByStatusAndAiEnabledTrue("ACTIVE")).thenReturn(List.of());
+
+        aiService.refreshCompanySummaries();
+
+        verify(companyRepository, never()).findByStatus(any());
+        verifyNoInteractions(aiProviderResolver);
+    }
+
+    @Test
     void outsiderCannotReadAiHistory() {
         mockOutsider();
 
@@ -169,6 +221,7 @@ class AiServiceTest {
         when(companyMemberRepository.findByCompanyIdAndUserIdAndStatus(
                 companyId, directorId, "ACTIVE"
         )).thenReturn(Optional.of(member));
+        when(companyRepository.isAiEnabled(companyId)).thenReturn(true);
 
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
 
@@ -245,6 +298,7 @@ class AiServiceTest {
     private AiProvider mockMemberAndProvider(UUID userId) {
         when(companyMemberRepository.existsByCompanyIdAndUserIdAndStatus(companyId, userId, "ACTIVE"))
                 .thenReturn(true);
+        when(companyRepository.isAiEnabled(companyId)).thenReturn(true);
         when(chatMessageRepository.findLatestGeneralChatMessagesForAiContext(eq(companyId), any()))
                 .thenReturn(List.of());
 

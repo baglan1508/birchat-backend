@@ -15,7 +15,8 @@ public record CompanyHomeResponse(
             String field,
             String logoUrl,
             String initial,
-            String color
+            String color,
+            Boolean aiEnabled
     ) {
     }
 
