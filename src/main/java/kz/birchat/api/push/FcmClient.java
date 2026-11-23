@@ -59,6 +59,11 @@ public class FcmClient {
 
     /** message — объект «message» FCM без поля token: его подставляем здесь. */
     public PushSender.Result send(String deviceToken, JsonNode message) {
+        return deliver(deviceToken, message).result();
+    }
+
+    /** Как send, но с HTTP-статусом и причиной от Google (для тестового пуша). */
+    public PushSender.Delivery deliver(String deviceToken, JsonNode message) {
         try {
             ServiceAccount sa = account();
             com.fasterxml.jackson.databind.node.ObjectNode body = objectMapper.createObjectNode();
@@ -81,13 +86,18 @@ public class FcmClient {
                 resetAccessToken();
             }
 
-            return toResult(response.statusCode(), response.body());
+            String body = response.body();
+            return new PushSender.Delivery(
+                    toResult(response.statusCode(), body),
+                    response.statusCode(),
+                    response.statusCode() == 200 || body == null ? null : body.substring(0, Math.min(300, body.length()))
+            );
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
-            return PushSender.Result.FAILED;
+            return new PushSender.Delivery(PushSender.Result.FAILED, 0, "interrupted");
         } catch (Exception ex) {
             log.warn("FCM request failed: {}", ex.toString());
-            return PushSender.Result.FAILED;
+            return new PushSender.Delivery(PushSender.Result.FAILED, 0, ex.getClass().getSimpleName() + ": " + ex.getMessage());
         }
     }
 
