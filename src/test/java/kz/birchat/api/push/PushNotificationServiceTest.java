@@ -48,8 +48,6 @@ class PushNotificationServiceTest {
     @Mock
     private ChatMessageActionsService chatMessageActionsService;
     @Mock
-    private ChatManagementService chatManagementService;
-    @Mock
     private ChatMessageMentionRepository chatMessageMentionRepository;
     @Mock
     private FcmClient fcmClient;
@@ -73,7 +71,7 @@ class PushNotificationServiceTest {
     void setUp() {
         service = new PushNotificationService(pushSender, deviceTokenRepository, presenceTracker,
                 chatMessageRepository, chatAttachmentRepository, companyMemberRepository,
-                chatMessageActionsService, chatManagementService, chatMessageMentionRepository, fcmClient,
+                chatMessageActionsService, chatMessageMentionRepository, fcmClient,
                 transactionManager, objectMapper);
         lenient().when(pushSender.isConfigured()).thenReturn(true);
 
@@ -110,13 +108,7 @@ class PushNotificationServiceTest {
     void pushGoesToMembersExceptAuthorAndThoseWithChatOpen() throws Exception {
         presenceTracker.touchChat(reader, chat.getId());
         when(deviceTokenRepository.findByUserIdIn(Set.of(away))).thenReturn(List.of(device(away, "aa11", "production", "ru")));
-        CompanyMemberEntity membership = new CompanyMemberEntity();
-        membership.setCompany(chat.getCompany());
-        when(companyMemberRepository.findByUserIdAndStatus(away, "ACTIVE")).thenReturn(List.of(membership));
-        when(chatManagementService.getChats(companyId, away)).thenReturn(List.of(
-                new ChatSummaryResponse(UUID.randomUUID(), "GENERAL", "Общий", 5L, 4L, null, null, null, null),
-                new ChatSummaryResponse(chat.getId(), "GROUP", "Склад Актобе", 3L, 3L, null, null, null, null)
-        ));
+        when(chatMessageRepository.countUnreadTotal(away)).thenReturn(7L);
 
         List<PushNotificationService.Outgoing> notifications = service.prepare(message.getId());
 
@@ -242,5 +234,40 @@ class PushNotificationServiceTest {
         when(deviceTokenRepository.findByUserIdIn(Set.of(reader, away))).thenReturn(List.of(android));
 
         assertTrue(service.prepare(message.getId()).isEmpty());
+    }
+
+    @Test
+    void testPushReportsAppleAnswerPerDeviceAndRemovesDeadToken() {
+        DeviceTokenEntity alive = device(author, "aa11bb22cc33", "sandbox", "kk");
+        DeviceTokenEntity dead = device(author, "dd44", "production", "ru");
+        DeviceTokenEntity android = device(author, "fcm:token", "production", "ru");
+        android.setPlatform("ANDROID");
+        when(deviceTokenRepository.findByUserIdIn(Set.of(author))).thenReturn(List.of(alive, dead, android));
+        when(pushSender.deliver(eq("aa11bb22cc33"), eq("sandbox"), anyString()))
+                .thenReturn(new PushSender.Delivery(PushSender.Result.SENT, 200, null));
+        when(pushSender.deliver(eq("dd44"), eq("production"), anyString()))
+                .thenReturn(new PushSender.Delivery(PushSender.Result.INVALID_TOKEN, 400, "BadDeviceToken"));
+
+        List<PushNotificationService.TestPushResult> results = service.sendTest(author);
+
+        assertEquals(3, results.size());
+        assertEquals("SENT", results.get(0).result());
+        assertEquals("…bb22cc33", results.get(0).tokenEnd());
+        assertEquals("INVALID_TOKEN", results.get(1).result());
+        assertEquals("BadDeviceToken", results.get(1).reason());
+        assertTrue(results.get(1).removed());
+        assertEquals("NOT_CONFIGURED", results.get(2).result());
+        verify(deviceTokenRepository).deleteByTokenValue("dd44");
+
+        kz.birchat.api.exception.ApiException tooOften = assertThrows(kz.birchat.api.exception.ApiException.class,
+                () -> service.sendTest(author));
+        assertEquals(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, tooOften.getStatus());
+    }
+
+    @Test
+    void badgeIsOneQuery() {
+        when(chatMessageRepository.countUnreadTotal(away)).thenReturn(123_456L);
+
+        assertEquals(9999, service.unreadTotal(away));
     }
 }

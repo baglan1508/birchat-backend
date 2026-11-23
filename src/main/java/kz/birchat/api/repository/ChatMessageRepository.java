@@ -13,6 +13,48 @@ import java.util.UUID;
 
 public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, UUID> {
 
+    /**
+     * Непрочитанные сообщения пользователя по всем чатам всех его компаний — цифра на иконке.
+     * Правила те же, что у unreadCount в списке чатов: общий чат; группы, где он участник
+     * (директор — все группы); личные чаты, где он участник; без своих и удалённых сообщений
+     * и без удалённых групп. Одним запросом вместо запросов на каждый чат каждой компании.
+     * Строка вынесена в константу, чтобы тест в CI проверил её на настоящем PostgreSQL.
+     */
+    String UNREAD_TOTAL_SQL = """
+        SELECT COUNT(*)
+        FROM birchat.chat_messages m
+        JOIN birchat.chats ch ON ch.id = m.chat_id
+        JOIN birchat.company_members cmem
+             ON cmem.company_id = m.company_id
+            AND cmem.user_id = :userId
+            AND cmem.status = 'ACTIVE'
+        JOIN birchat.roles r ON r.id = cmem.role_id
+        LEFT JOIN birchat.chat_read_states rs
+             ON rs.company_id = m.company_id
+            AND rs.chat_id = m.chat_id
+            AND rs.user_id = :userId
+        WHERE m.is_deleted = false
+          AND m.user_id <> :userId
+          AND ch.deleted_at IS NULL
+          AND (
+                ch.type = 'GENERAL'
+                OR (ch.type = 'GROUP' AND r.code = 'DIRECTOR')
+                OR EXISTS (
+                    SELECT 1 FROM birchat.chat_members x
+                    WHERE x.chat_id = ch.id AND x.user_id = :userId
+                )
+          )
+          AND (
+                rs.last_read_message_created_at IS NULL
+                OR rs.last_read_message_id IS NULL
+                OR m.created_at > rs.last_read_message_created_at
+                OR (m.created_at = rs.last_read_message_created_at AND m.id > rs.last_read_message_id)
+          )
+        """;
+
+    @Query(value = UNREAD_TOTAL_SQL, nativeQuery = true)
+    long countUnreadTotal(@Param("userId") UUID userId);
+
     @Query("""
             SELECT m
             FROM ChatMessageEntity m
