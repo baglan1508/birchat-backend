@@ -112,3 +112,6 @@ push:
     bundle-id: ${APNS_BUNDLE_ID:kz.birchat.app}
     # Содержимое файла AuthKey_XXXXXXXXXX.p8 целиком
     private-key: ${APNS_PRIVATE_KEY:}
+  fcm:
+    # JSON-ключ сервисного аккаунта Firebase целиком (пуши на Android)
+    service-account-json: ${FCM_SERVICE_ACCOUNT_JSON:}

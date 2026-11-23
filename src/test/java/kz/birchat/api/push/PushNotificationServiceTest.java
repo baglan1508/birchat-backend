@@ -52,6 +52,8 @@ class PushNotificationServiceTest {
     @Mock
     private ChatMessageMentionRepository chatMessageMentionRepository;
     @Mock
+    private FcmClient fcmClient;
+    @Mock
     private PlatformTransactionManager transactionManager;
 
     private final ChatPresenceTracker presenceTracker = new ChatPresenceTracker();
@@ -71,8 +73,9 @@ class PushNotificationServiceTest {
     void setUp() {
         service = new PushNotificationService(pushSender, deviceTokenRepository, presenceTracker,
                 chatMessageRepository, chatAttachmentRepository, companyMemberRepository,
-                chatMessageActionsService, chatManagementService, chatMessageMentionRepository,
+                chatMessageActionsService, chatManagementService, chatMessageMentionRepository, fcmClient,
                 transactionManager, objectMapper);
+        lenient().when(pushSender.isConfigured()).thenReturn(true);
 
         CompanyEntity company = new CompanyEntity();
         company.setId(companyId);
@@ -208,5 +211,36 @@ class PushNotificationServiceTest {
         assertEquals("Нурлан", json.at("/aps/alert/title").asText());
         assertTrue(json.at("/aps/alert/subtitle").isMissingNode());
         assertEquals("По оплате ждём подтверждение до пятницы", json.at("/aps/alert/body").asText());
+    }
+
+    @Test
+    void androidGetsFcmMessageWithGroupInTitle() throws Exception {
+        when(fcmClient.isConfigured()).thenReturn(true);
+        DeviceTokenEntity android = device(away, "fcm:Token_AbC", "production", "ru");
+        android.setPlatform("ANDROID");
+        when(deviceTokenRepository.findByUserIdIn(Set.of(reader, away))).thenReturn(List.of(android));
+
+        List<PushNotificationService.Outgoing> notifications = service.prepare(message.getId());
+
+        assertEquals(1, notifications.size());
+        assertEquals("ANDROID", notifications.get(0).platform());
+        JsonNode json = objectMapper.readTree(notifications.get(0).payloadJson());
+        assertEquals("Nomad Trade · Склад Актобе", json.at("/notification/title").asText());
+        assertEquals("Нурлан: По оплате ждём подтверждение до пятницы", json.at("/notification/body").asText());
+        assertEquals(chat.getId().toString(), json.at("/data/chatId").asText());
+        assertEquals(json.at("/notification/title").asText(), json.at("/data/title").asText());
+        assertEquals("HIGH", json.at("/android/priority").asText());
+        assertEquals("messages", json.at("/android/notification/channel_id").asText());
+        assertEquals(chat.getId().toString(), json.at("/android/notification/tag").asText());
+        assertTrue(json.at("/token").isMissingNode());
+    }
+
+    @Test
+    void androidIsSkippedWithoutFirebaseKey() {
+        DeviceTokenEntity android = device(away, "fcmtoken", "production", "ru");
+        android.setPlatform("ANDROID");
+        when(deviceTokenRepository.findByUserIdIn(Set.of(reader, away))).thenReturn(List.of(android));
+
+        assertTrue(service.prepare(message.getId()).isEmpty());
     }
 }

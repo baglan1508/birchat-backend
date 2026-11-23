@@ -19,6 +19,7 @@
 | 0.3 | `aiEnabled` | выпуск 18 |
 | 0.4 | `POST /employees` без чужого профиля | выпуск 18 |
 | 0.5 | Убрать сотрудника | выпуск 18 |
+| 1 | Push на Android (FCM) | выпуск 21; пуши пойдут, когда владелец добавит ключ Firebase |
 | — | `general` вместо id общего чата везде | выпуск 18 |
 | 2 | Личные чаты | выпуск 19 |
 | 3 | Ответ и пересылка полями | выпуск 19 |
@@ -109,6 +110,31 @@ DELETE /api/companies/{companyId}/employees/{userId}    → 204
 * В событиях WebSocket `chatId` — всегда UUID.
 
 ---
+
+## 1. Push на Android (FCM)
+
+```http
+POST /api/devices
+{ "platform": "ANDROID", "token": "<FCM registration token>", "locale": "ru" }
+→ 204
+```
+
+* `environment` для Android не нужен (можно передавать `production` — сервер его игнорирует). Для iOS — как раньше, обязателен.
+* Токен FCM хранится как есть (регистр важен). `DELETE /api/devices/{token}` — тот же токен.
+* Формат сообщения — как в ТЗ:
+
+```json
+{
+  "notification": { "title": "Nomad Trade · Склад Актобе", "body": "Нурлан: По оплате ждём…" },
+  "data": { "companyId": "…", "chatId": "…", "messageId": "…", "title": "Nomad Trade · Склад Актобе", "body": "Нурлан: По оплате ждём…" },
+  "android": { "priority": "HIGH", "notification": { "channel_id": "messages", "tag": "<chatId>" } }
+}
+```
+
+  Общий чат — `title` = компания; группа — «компания · группа»; личный чат — имя автора, `body` без «Имя:»; упоминание — «Нурлан упомянул(а) вас: …».
+* Те же правила, что у APNs: всем участникам, кроме автора и тех, кто смотрит чат (`viewing`); упомянутым — всегда.
+* Мёртвый токен (`UNREGISTERED`) сервер удаляет сам — регистрируйте устройство при каждом запуске и после входа.
+* Канал уведомлений `messages` создаёт приложение. `google-services.json` с пакетом `kz.birchat.app` — у владельца проекта Firebase.
 
 ## 2. Личные чаты
 
