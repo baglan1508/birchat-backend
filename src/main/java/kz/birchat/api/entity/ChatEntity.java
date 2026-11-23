@@ -20,7 +20,8 @@ public class ChatEntity {
     @JoinColumn(name = "company_id", nullable = false)
     private CompanyEntity company;
 
-    @Column(name = "name", nullable = false)
+    /** У личного чата названия нет (null). */
+    @Column(name = "name")
     private String name;
 
     @Column(name = "type", nullable = false)
@@ -32,4 +33,8 @@ public class ChatEntity {
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
+
+    /** Только у личного чата: «меньший userId:больший userId» — один чат на пару людей в компании. */
+    @Column(name = "direct_key")
+    private String directKey;
 }

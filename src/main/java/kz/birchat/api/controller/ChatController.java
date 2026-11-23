@@ -48,6 +48,16 @@ public class ChatController {
         return chatManagementService.createGroupChat(companyId, userId, request);
     }
 
+    /** Личный чат с коллегой: существующий или новый. */
+    @PostMapping("/direct")
+    public ChatDetailsResponse openDirectChat(
+            @PathVariable UUID companyId,
+            @CurrentUser UUID userId,
+            @Valid @RequestBody CreateDirectChatRequest request
+    ) {
+        return chatManagementService.openDirectChat(companyId, userId, request.userId());
+    }
+
     @GetMapping("/{chatId}")
     public ChatDetailsResponse getChat(
             @PathVariable UUID companyId,
@@ -127,6 +137,33 @@ public class ChatController {
             @Valid @RequestBody CreateFileMessageRequest request
     ) {
         return notified(chatService.createFileMessage(companyId, chatId, userId, request));
+    }
+
+    /** Изменить сообщение: только автор, не позже 48 часов. */
+    @PatchMapping("/{chatId}/messages/{messageId}")
+    public ChatMessageResponse editMessage(
+            @PathVariable UUID companyId,
+            @PathVariable UUID chatId,
+            @PathVariable UUID messageId,
+            @CurrentUser UUID userId,
+            @Valid @RequestBody EditMessageRequest request
+    ) {
+        ChatMessageResponse message = chatService.editMessage(companyId, chatId, messageId, userId, request);
+        realtimeEventService.messageUpdated(message);
+        return message;
+    }
+
+    /** Какие сообщения чата изменены после since (для обновления экрана при polling). */
+    @GetMapping("/{chatId}/messages/updated")
+    public UpdatedMessagesResponse getUpdatedMessages(
+            @PathVariable UUID companyId,
+            @PathVariable UUID chatId,
+            @CurrentUser UUID userId,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME
+            ) java.time.OffsetDateTime since
+    ) {
+        return chatService.getUpdatedSince(companyId, chatId, userId, since);
     }
 
     /** Удалить сообщение у всех: автор или директор. */

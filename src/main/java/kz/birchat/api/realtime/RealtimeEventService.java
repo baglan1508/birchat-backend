@@ -29,6 +29,7 @@ import java.util.function.Supplier;
  * События для приложения по WebSocket. Каждое событие — JSON с полями type, companyId, chatId:
  *
  *   message.created  — message: то же, что отдаёт GET …/messages (приходит и автору — на другие его устройства);
+ *   message.updated  — message: сообщение после изменения;
  *   message.deleted  — messageId;
  *   chat.read        — userId, lastReadMessageId, lastReadMessageCreatedAt (кто-то прочитал чат);
  *   chat.renamed     — name.
@@ -72,6 +73,23 @@ public class RealtimeEventService {
                         .map(found -> found.getChat())
                         .orElse(null),
                 "message.created",
+                Map.of("message", message)
+        );
+    }
+
+    /** Сообщение изменили: message — то же, что в GET …/messages. */
+    public void messageUpdated(ChatMessageResponse message) {
+        if (message == null) {
+            return;
+        }
+
+        publish(
+                () -> chatMessageRepository.findAllWithUserAndChatByIdIn(java.util.List.of(message.id()))
+                        .stream()
+                        .findFirst()
+                        .map(found -> found.getChat())
+                        .orElse(null),
+                "message.updated",
                 Map.of("message", message)
         );
     }

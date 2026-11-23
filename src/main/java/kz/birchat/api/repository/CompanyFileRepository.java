@@ -12,8 +12,8 @@ import java.util.UUID;
 public interface CompanyFileRepository extends JpaRepository<CompanyFileEntity, UUID> {
 
     /**
-     * Файлы, доступные пользователю: файлы компании (chat_id IS NULL) и файлы групп,
-     * где он участник. Директор видит все файлы компании.
+     * Файлы, доступные пользователю: файлы компании (chat_id IS NULL) и файлы групп и личных чатов,
+     * где он участник. Директор видит файлы всех групп, но не чужих личных чатов.
      */
     @Query("""
         SELECT f FROM CompanyFileEntity f
@@ -22,7 +22,9 @@ public interface CompanyFileRepository extends JpaRepository<CompanyFileEntity, 
           AND f.status = 'READY'
           AND (
                 f.chat IS NULL
-                OR :director = true
+                OR (:director = true AND EXISTS (
+                    SELECT c.id FROM ChatEntity c WHERE c.id = f.chat.id AND c.type = 'GROUP'
+                ))
                 OR EXISTS (
                     SELECT cm.id FROM ChatMemberEntity cm
                     WHERE cm.chat.id = f.chat.id
@@ -49,7 +51,9 @@ public interface CompanyFileRepository extends JpaRepository<CompanyFileEntity, 
           AND LOCATE(LOWER(:query), LOWER(f.originalFileName)) > 0
           AND (
                 f.chat IS NULL
-                OR :director = true
+                OR (:director = true AND EXISTS (
+                    SELECT c.id FROM ChatEntity c WHERE c.id = f.chat.id AND c.type = 'GROUP'
+                ))
                 OR EXISTS (
                     SELECT cm.id FROM ChatMemberEntity cm
                     WHERE cm.chat.id = f.chat.id

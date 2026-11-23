@@ -8,6 +8,7 @@ import kz.birchat.api.entity.ChatEntity;
 import kz.birchat.api.entity.ChatMessageEntity;
 import kz.birchat.api.entity.CompanyMemberEntity;
 import kz.birchat.api.repository.ChatAttachmentRepository;
+import kz.birchat.api.repository.ChatMessageMentionRepository;
 import kz.birchat.api.repository.ChatMessageRepository;
 import kz.birchat.api.repository.CompanyMemberRepository;
 import kz.birchat.api.service.ChatAccessService;
@@ -21,6 +22,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +52,7 @@ public class PushNotificationService {
     private final CompanyMemberRepository companyMemberRepository;
     private final ChatMessageActionsService chatMessageActionsService;
     private final ChatManagementService chatManagementService;
+    private final ChatMessageMentionRepository chatMessageMentionRepository;
     private final PlatformTransactionManager transactionManager;
     private final ObjectMapper objectMapper;
 
@@ -131,9 +134,19 @@ public class PushNotificationService {
         UUID authorId = message.getUser().getId();
         boolean general = ChatAccessService.isGeneral(chat);
 
+        boolean direct = ChatAccessService.isDirect(chat);
+
         Set<UUID> recipients = chatMessageActionsService.recipients(companyId, chat);
         recipients.remove(authorId);
-        recipients.removeIf(userId -> presenceTracker.isInChat(userId, chat.getId(), general ? companyId : null));
+
+        // Упомянутому push приходит, даже если чат у него открыт.
+        Set<UUID> mentioned = new HashSet<>();
+        chatMessageMentionRepository.findByMessageIds(List.of(messageId))
+                .forEach(mention -> mentioned.add(mention.getUser().getId()));
+        mentioned.retainAll(recipients);
+
+        recipients.removeIf(userId -> !mentioned.contains(userId)
+                && presenceTracker.isInChat(userId, chat.getId(), general ? companyId : null));
 
         if (recipients.isEmpty()) {
             return List.of();
@@ -160,13 +173,24 @@ public class PushNotificationService {
 
         for (DeviceTokenEntity device : devices) {
             int badge = badges.computeIfAbsent(device.getUserId(), this::unreadTotal);
-            String body = PushTextBuilder.body(authorName, message.getType(), message.getContent(), fileName, device.getLocale());
+            String body;
+
+            if (mentioned.contains(device.getUserId())) {
+                body = PushTextBuilder.mentionBody(authorName, message.getType(), message.getContent(), fileName, device.getLocale());
+            } else if (direct) {
+                body = PushTextBuilder.text(message.getType(), message.getContent(), fileName, device.getLocale());
+            } else {
+                body = PushTextBuilder.body(authorName, message.getType(), message.getContent(), fileName, device.getLocale());
+            }
+
+            // Личный чат: заголовок — имя автора, без названия чата.
+            String title = direct ? authorName : companyName;
+            String subtitle = general || direct ? null : chat.getName();
 
             result.add(new Outgoing(
                     device.getToken(),
                     device.getEnvironment(),
-                    toJson(payload(companyName, general ? null : chat.getName(), body, badge,
-                            companyId, chat.getId(), messageId))
+                    toJson(payload(title, subtitle, body, badge, companyId, chat.getId(), messageId))
             ));
         }
 

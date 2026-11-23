@@ -16,16 +16,19 @@ public interface ChatRepository extends JpaRepository<ChatEntity, UUID> {
      */
     Optional<ChatEntity> findByCompanyIdAndType(UUID companyId, String type);
 
+    /** Личный чат пары людей в компании (directKey — «меньший userId:больший userId»). */
+    Optional<ChatEntity> findByCompanyIdAndDirectKey(UUID companyId, String directKey);
+
     /**
-     * Чаты, которые видит пользователь: общий чат и группы, где он участник.
-     * Директор видит все группы компании.
+     * Чаты, которые видит пользователь: общий чат, группы и личные чаты, где он участник.
+     * Директор видит все группы компании, но не чужие личные чаты.
      */
     @Query("""
             SELECT c FROM ChatEntity c
             WHERE c.company.id = :companyId
               AND (
                     c.type = 'GENERAL'
-                    OR :director = true
+                    OR (:director = true AND c.type = 'GROUP')
                     OR EXISTS (
                         SELECT cm.id FROM ChatMemberEntity cm
                         WHERE cm.chat.id = c.id

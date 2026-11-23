@@ -11,6 +11,7 @@ public record ChatSummaryResponse(
         Long unreadCount,
         String lastMessage,
         OffsetDateTime lastMessageAt,
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+        ChatPeerResponse peer
 ) {
 }
