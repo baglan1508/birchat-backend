@@ -20,6 +20,10 @@
 | 0.4 | `POST /employees` без чужого профиля | выпуск 18 |
 | 0.5 | Убрать сотрудника | выпуск 18 |
 | — | `general` вместо id общего чата везде | выпуск 18 |
+| 2 | Личные чаты | выпуск 19 |
+| 3 | Ответ и пересылка полями | выпуск 19 |
+| 4 | Редактирование | выпуск 19 |
+| 6 | Упоминания `@` | выпуск 19 |
 
 ---
 
@@ -94,3 +98,87 @@ DELETE /api/companies/{companyId}/employees/{userId}    → 204
 * Работает в **любом** пути `/api/companies/{companyId}/chats/general/…`: удаление у всех, `messages/deleted`, `readers`, `GET /chats/general` и всё новое из v1.6.
 * WebSocket: `{"type":"viewing","chatId":"general","companyId":"…"}` — общий чат отмечается открытым (без `companyId` сервер не знает, какой общий чат имеется в виду). Можно по-прежнему слать `generalChatId`.
 * В событиях WebSocket `chatId` — всегда UUID.
+
+---
+
+## 2. Личные чаты
+
+```http
+POST /api/companies/{companyId}/chats/direct
+{ "userId": "<собеседник>" }
+→ 200 ChatDetailsResponse      // существующий чат или новый
+```
+
+* Любой сотрудник с любым сотрудником компании. Идемпотентно: на пару людей один чат.
+* С собой — `400 VALIDATION`; собеседник не сотрудник компании — `404 USER_NOT_FOUND`.
+* `type: "DIRECT"`, `name: null`, `canManage: false`, в `members` двое.
+* `GET /chats` (`ChatSummaryResponse`): новое поле `peer` — у `DIRECT`, у остальных `null`:
+
+```json
+{ "chatId": "…", "type": "DIRECT", "name": null, "membersCount": 2, "unreadCount": 1,
+  "lastMessage": "Привет", "lastMessageAt": "…", "createdAt": "…",
+  "peer": { "userId": "…", "fullName": "Нурлан Ахметов", "displayName": "Нурлан", "initials": "НА", "avatarUrl": null } }
+```
+
+  Чат без сообщений в списке не показывается: создавайте его в момент открытия, он появится с первым сообщением.
+* Сообщения, файлы, прочтение, удаление, `readers`, события WebSocket и push — через те же `/chats/{chatId}/…`. Файлы личного чата видны только двоим.
+* Нельзя: переименовать (`PATCH` → `403 FORBIDDEN`), добавлять и убирать участников (`403 FORBIDDEN`). Директор чужие личные чаты не видит — ни в списке, ни в поиске, ни в файлах (`GET /chats/{id}` → `403 CHAT_ACCESS_DENIED`).
+* Push: `title` — имя автора, `body` — только текст, без `subtitle`.
+* Собеседника убрали из компании: чат остаётся в списке, переписка видна, отправка → `403 CHAT_ACCESS_DENIED`.
+
+## 3. Ответ и пересылка — полями
+
+Запрос `POST …/messages`:
+
+```json
+{ "text": "Да, до пятницы", "replyToMessageId": "…", "forwardedFromMessageId": "…", "mentions": ["…"] }
+```
+
+`POST …/messages/file` принимает `replyToMessageId` и `mentions` (пересылка — только через `POST …/messages`).
+
+Ответ (`ChatMessageResponse`, новые поля):
+
+```json
+"replyTo": { "id": "…", "userId": "…", "authorName": "Нурлан", "text": "Первые 100 символов…", "type": "TEXT", "deleted": false },
+"forwardedFrom": { "messageId": "…", "userId": "…", "authorName": "Айгерим" },
+"editedAt": null,
+"mentions": [{ "userId": "…", "fullName": "Айгерим Сатпаева" }]
+```
+
+* `replyToMessageId` — только неудалённое сообщение этого же чата, иначе `404 MESSAGE_NOT_FOUND`. Исходное удалили потом — `replyTo` остаётся с `text: null`, `deleted: true`. У вложения `text` — подпись, а без неё имя файла; `type` — тип исходного сообщения.
+* `forwardedFromMessageId` — сообщение из чата этой компании, где отправитель состоит. `text` необязателен: без него берётся текст исходного. Тип и вложение — как у исходного: к новому сообщению прикрепляется **тот же файл**, и он открывается у всех в чате, куда переслали (`download-urls` его отдаёт). Пересылка пересланного показывает первоисточник.
+* Старые сообщения со служебной строкой `> …` / `>> …` в тексте остаются как есть — клиенту нужно продолжать их понимать.
+
+## 4. Редактирование сообщения
+
+```http
+PATCH /api/companies/{companyId}/chats/{chatId}/messages/{messageId}
+{ "text": "Исправленный текст", "mentions": ["…"] }       // mentions — необязательно
+→ 200 ChatMessageResponse
+```
+
+| Ошибка | Когда |
+|---|---|
+| `403 FORBIDDEN` | не автор |
+| `403 EDIT_EXPIRED` | прошло больше 48 часов |
+| `400 VALIDATION` | пустой текст у текстового сообщения (подпись файла стереть можно) |
+
+* `editedAt` в `ChatMessageResponse` (`null`, если не редактировали). `mentions`, если переданы, заменяют прежние.
+* WebSocket: `{ "type": "message.updated", "companyId", "chatId", "message": { … } }`.
+* Опрос — по образцу `deleted`:
+
+```http
+GET …/chats/{chatId}/messages/updated?since={checkedAt}
+→ { "messages": [ ChatMessageResponse… ], "checkedAt": "…" }
+```
+
+  При открытии чата — без `since` (вернётся пустой список и серверное время).
+* Push не отправляется.
+
+## 6. Упоминания `@`
+
+* В запросе `mentions: [userId]` (и в `POST …/messages/file`, и в `PATCH`). Сервер оставляет только участников этого чата, себя и остальных молча отбрасывает. Текст не меняет.
+* В ответе `mentions: [{ userId, fullName }]`.
+* Упомянутому push приходит **даже если чат у него открыт**: «Нурлан упомянул(а) вас: …» / «Нурлан сізді атап өтті: …» — по языку устройства. Остальным — обычный.
+* Лента «Меня упомянули» — позже, данные для неё уже хранятся.
+
