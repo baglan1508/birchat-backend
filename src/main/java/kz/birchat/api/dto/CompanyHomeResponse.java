@@ -15,7 +15,8 @@ public record CompanyHomeResponse(
             String field,
             String logoUrl,
             String initial,
-            String color
+            String color,
+            Boolean aiEnabled
     ) {
     }
 
@@ -25,7 +26,8 @@ public record CompanyHomeResponse(
             Long messagesCount,
             Long unreadCount,
             String lastMessage,
-            OffsetDateTime lastMessageAt
+            OffsetDateTime lastMessageAt,
+            ChatMessageResponse pinnedMessage
     ) {
     }
 

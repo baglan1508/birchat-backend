@@ -6,6 +6,7 @@ import kz.birchat.api.entity.ChatEntity;
 import kz.birchat.api.entity.CompanyEntity;
 import kz.birchat.api.repository.ChatMessageRepository;
 import kz.birchat.api.repository.ChatRepository;
+import kz.birchat.api.repository.CompanyMemberRepository;
 import kz.birchat.api.service.ChatMessageActionsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,8 @@ class RealtimeEventServiceTest {
     @Mock
     private ChatMessageActionsService chatMessageActionsService;
     @Mock
+    private CompanyMemberRepository companyMemberRepository;
+    @Mock
     private PlatformTransactionManager transactionManager;
     @Mock
     private WebSocketSession memberSession;
@@ -54,7 +57,7 @@ class RealtimeEventServiceTest {
     @BeforeEach
     void setUp() {
         service = new RealtimeEventService(registry, chatRepository, chatMessageRepository,
-                chatMessageActionsService, transactionManager, objectMapper);
+                chatMessageActionsService, companyMemberRepository, transactionManager, objectMapper);
 
         CompanyEntity company = new CompanyEntity();
         company.setId(companyId);
@@ -66,7 +69,7 @@ class RealtimeEventServiceTest {
         lenient().when(outsiderSession.isOpen()).thenReturn(true);
         registry.add(member, memberSession);
         registry.add(outsider, outsiderSession);
-        when(chatMessageActionsService.recipients(companyId, chat)).thenReturn(new HashSet<>(Set.of(member)));
+        lenient().when(chatMessageActionsService.recipients(companyId, chat)).thenReturn(new HashSet<>(Set.of(member)));
     }
 
     @Test
@@ -96,5 +99,29 @@ class RealtimeEventServiceTest {
         service.deliver(() -> chat, "chat.renamed", Map.of("name", "Склад"));
 
         verify(second).sendMessage(any());
+    }
+
+    @Test
+    void removedMemberGetsCompanyRemovedAndColleaguesGetMemberRemoved() throws Exception {
+        kz.birchat.api.entity.UserEntity colleague = new kz.birchat.api.entity.UserEntity();
+        colleague.setId(member);
+        kz.birchat.api.entity.CompanyMemberEntity colleagueMembership = new kz.birchat.api.entity.CompanyMemberEntity();
+        colleagueMembership.setUser(colleague);
+        when(companyMemberRepository.findByCompanyIdAndStatusOrderByJoinedAtAsc(companyId, "ACTIVE"))
+                .thenReturn(java.util.List.of(colleagueMembership));
+
+        service.deliverMemberRemoved(companyId, outsider);
+
+        ArgumentCaptor<TextMessage> removed = ArgumentCaptor.forClass(TextMessage.class);
+        verify(outsiderSession).sendMessage(removed.capture());
+        JsonNode removedJson = objectMapper.readTree(removed.getValue().getPayload());
+        assertEquals("company.removed", removedJson.get("type").asText());
+        assertEquals(companyId.toString(), removedJson.get("companyId").asText());
+
+        ArgumentCaptor<TextMessage> colleagues = ArgumentCaptor.forClass(TextMessage.class);
+        verify(memberSession).sendMessage(colleagues.capture());
+        JsonNode memberJson = objectMapper.readTree(colleagues.getValue().getPayload());
+        assertEquals("member.removed", memberJson.get("type").asText());
+        assertEquals(outsider.toString(), memberJson.get("userId").asText());
     }
 }

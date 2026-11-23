@@ -54,6 +54,16 @@ public class ApnsClient implements PushSender {
 
     @Override
     public Result send(String deviceToken, String environment, String payloadJson) {
+        return send(deviceToken, environment, payloadJson, "10");
+    }
+
+    /** Только бейдж: тип alert (так Apple требует для бейджа), приоритет 5 — без срочной доставки. */
+    @Override
+    public Result sendQuiet(String deviceToken, String environment, String payloadJson) {
+        return send(deviceToken, environment, payloadJson, "5");
+    }
+
+    private Result send(String deviceToken, String environment, String payloadJson, String priority) {
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(host(environment) + "/3/device/" + deviceToken))
@@ -61,7 +71,7 @@ public class ApnsClient implements PushSender {
                     .header("authorization", "bearer " + authToken(Instant.now()))
                     .header("apns-topic", properties.getBundleId().trim())
                     .header("apns-push-type", "alert")
-                    .header("apns-priority", "10")
+                    .header("apns-priority", priority)
                     .POST(HttpRequest.BodyPublishers.ofString(payloadJson, StandardCharsets.UTF_8))
                     .build();
 

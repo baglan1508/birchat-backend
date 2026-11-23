@@ -34,6 +34,24 @@ public interface CompanyMemberRepository extends JpaRepository<CompanyMemberEnti
 
     long countByCompanyIdAndStatus(UUID companyId, String status);
 
+    @EntityGraph(attributePaths = {"user", "role"})
+    List<CompanyMemberEntity> findByCompanyIdAndUserIdIn(UUID companyId, java.util.Collection<UUID> userIds);
+
+    /** Участие в компании в любом статусе (пара компания + человек уникальна). */
+    @EntityGraph(attributePaths = {"user", "role"})
+    Optional<CompanyMemberEntity> findByCompanyIdAndUserId(UUID companyId, UUID userId);
+
+    /** Человек открыл список своих компаний — во всех новых для него компаниях он «зашёл». */
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("""
+        UPDATE CompanyMemberEntity m SET m.acceptedAt = :now
+        WHERE m.user.id = :userId AND m.status = 'ACTIVE' AND m.acceptedAt IS NULL
+        """)
+    int markAccepted(
+            @org.springframework.data.repository.query.Param("userId") UUID userId,
+            @org.springframework.data.repository.query.Param("now") java.time.LocalDateTime now
+    );
+
     /** Все активные участия в компании → новый статус (удаление компании). */
     @org.springframework.data.jpa.repository.Modifying
     @org.springframework.data.jpa.repository.Query("""

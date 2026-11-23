@@ -28,6 +28,7 @@ public class AiController {
             @CurrentUser UUID userId,
             @Valid @RequestBody AiAskRequest request
     ) {
+        aiService.requireAskAllowed(companyId, userId);
         aiQuotaService.consumeForAsk(companyId, userId, request);
 
         return aiService.ask(

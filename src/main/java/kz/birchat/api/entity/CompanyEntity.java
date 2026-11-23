@@ -38,6 +38,14 @@ public class CompanyEntity {
     @Column(name = "status")
     private String status;
 
+    /** Согласие компании на обработку сообщений и файлов сторонним AI (меняет директор). */
+    @Column(name = "ai_enabled", nullable = false)
+    private boolean aiEnabled;
+
+    /** Группы могут создавать все сотрудники, а не только директор. */
+    @Column(name = "members_can_create_groups", nullable = false)
+    private boolean membersCanCreateGroups;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

@@ -56,6 +56,9 @@ class ChatManagementServiceTest {
     @Mock
     private CompanyMemberRepository companyMemberRepository;
 
+    @Mock
+    private ChatMessageActionsService chatMessageActionsService;
+
     @InjectMocks
     private ChatManagementService service;
 
@@ -65,8 +68,8 @@ class ChatManagementServiceTest {
 
     @Test
     void nonDirectorCannotCreateGroup() {
-        when(currentUserService.requireDirector(companyId, employeeId))
-                .thenThrow(ApiException.forbidden(ApiErrorCode.FORBIDDEN, "Только директор"));
+        when(currentUserService.requireActiveMember(companyId, employeeId))
+                .thenReturn(companyMember(employeeId, "EMPLOYEE"));
 
         ApiException error = assertThrows(ApiException.class, () -> service.createGroupChat(
                 companyId, employeeId, new CreateGroupChatRequest("Склад", List.of())
@@ -78,7 +81,7 @@ class ChatManagementServiceTest {
 
     @Test
     void cannotAddPeopleFromOutsideTheCompany() {
-        when(currentUserService.requireDirector(companyId, directorId))
+        when(currentUserService.requireActiveMember(companyId, directorId))
                 .thenReturn(companyMember(directorId, "DIRECTOR"));
         when(companyMemberRepository.findByCompanyIdAndStatusOrderByJoinedAtAsc(companyId, "ACTIVE"))
                 .thenReturn(List.of(companyMember(directorId, "DIRECTOR")));
@@ -100,7 +103,7 @@ class ChatManagementServiceTest {
         CompanyMemberEntity director = companyMember(directorId, "DIRECTOR");
         CompanyMemberEntity employee = companyMember(employeeId, "EMPLOYEE");
 
-        when(currentUserService.requireDirector(companyId, directorId)).thenReturn(director);
+        when(currentUserService.requireActiveMember(companyId, directorId)).thenReturn(director);
         when(companyMemberRepository.findByCompanyIdAndStatusOrderByJoinedAtAsc(companyId, "ACTIVE"))
                 .thenReturn(List.of(director, employee));
         when(chatRepository.save(any(ChatEntity.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -130,7 +133,7 @@ class ChatManagementServiceTest {
         general.setId(UUID.randomUUID());
         general.setType("GENERAL");
 
-        when(currentUserService.requireDirector(companyId, directorId))
+        when(currentUserService.requireActiveMember(companyId, directorId))
                 .thenReturn(companyMember(directorId, "DIRECTOR"));
         when(chatAccessService.requireCompanyChat(companyId, general.getId())).thenReturn(general);
 
@@ -140,6 +143,195 @@ class ChatManagementServiceTest {
 
         assertEquals(HttpStatus.BAD_REQUEST, error.getStatus());
         verify(chatMemberRepository, never()).saveAll(anyList());
+    }
+
+    @Test
+    void employeeOpensDirectChatWithColleague() {
+        CompanyMemberEntity me = companyMember(employeeId, "EMPLOYEE");
+        CompanyMemberEntity peer = companyMember(directorId, "DIRECTOR");
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(me);
+        when(companyMemberRepository.findByCompanyIdAndUserIdAndStatus(companyId, directorId, "ACTIVE"))
+                .thenReturn(java.util.Optional.of(peer));
+        when(chatRepository.findByCompanyIdAndDirectKey(eq(companyId), anyString()))
+                .thenReturn(java.util.Optional.empty());
+        when(chatRepository.save(any(ChatEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(chatMemberRepository.findMembers(any())).thenReturn(List.of());
+
+        ChatDetailsResponse response = service.openDirectChat(companyId, employeeId, directorId);
+
+        assertEquals("DIRECT", response.type());
+        assertNull(response.name());
+        assertFalse(response.canManage());
+
+        ArgumentCaptor<ChatEntity> chat = ArgumentCaptor.forClass(ChatEntity.class);
+        verify(chatRepository).save(chat.capture());
+        assertEquals(ChatManagementService.directKey(directorId, employeeId), chat.getValue().getDirectKey());
+        assertEquals(ChatManagementService.directKey(employeeId, directorId), chat.getValue().getDirectKey());
+        verify(chatMemberRepository).saveAll(anyList());
+    }
+
+    @Test
+    void existingDirectChatIsReused() {
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(companyMember(employeeId, "EMPLOYEE"));
+        when(companyMemberRepository.findByCompanyIdAndUserIdAndStatus(companyId, directorId, "ACTIVE"))
+                .thenReturn(java.util.Optional.of(companyMember(directorId, "DIRECTOR")));
+        ChatEntity existing = new ChatEntity();
+        existing.setId(UUID.randomUUID());
+        existing.setType("DIRECT");
+        when(chatRepository.findByCompanyIdAndDirectKey(companyId, ChatManagementService.directKey(employeeId, directorId)))
+                .thenReturn(java.util.Optional.of(existing));
+        when(chatMemberRepository.findMembers(existing.getId())).thenReturn(List.of());
+
+        ChatDetailsResponse response = service.openDirectChat(companyId, employeeId, directorId);
+
+        assertEquals(existing.getId(), response.chatId());
+        verify(chatRepository, never()).save(any());
+        verify(chatMemberRepository, never()).saveAll(anyList());
+    }
+
+    @Test
+    void cannotOpenDirectChatWithYourself() {
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(companyMember(employeeId, "EMPLOYEE"));
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> service.openDirectChat(companyId, employeeId, employeeId));
+
+        assertEquals(HttpStatus.BAD_REQUEST, error.getStatus());
+        verifyNoInteractions(chatRepository);
+    }
+
+    @Test
+    void cannotOpenDirectChatWithOutsider() {
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(companyMember(employeeId, "EMPLOYEE"));
+        UUID outsider = UUID.randomUUID();
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> service.openDirectChat(companyId, employeeId, outsider));
+
+        assertEquals(HttpStatus.NOT_FOUND, error.getStatus());
+        assertEquals(ApiErrorCode.USER_NOT_FOUND, error.getCode());
+    }
+
+    @Test
+    void directChatCannotBeRenamed() {
+        ChatEntity direct = new ChatEntity();
+        direct.setId(UUID.randomUUID());
+        direct.setType("DIRECT");
+        when(currentUserService.requireActiveMember(companyId, directorId)).thenReturn(companyMember(directorId, "DIRECTOR"));
+        when(chatAccessService.requireCompanyChat(companyId, direct.getId())).thenReturn(direct);
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> service.renameChat(companyId, direct.getId(), directorId, "Новое"));
+
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+    }
+
+    @Test
+    void emptyDirectChatIsHiddenFromListAndPeerIsShown() {
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(companyMember(employeeId, "EMPLOYEE"));
+
+        ChatEntity empty = new ChatEntity();
+        empty.setId(UUID.randomUUID());
+        empty.setType("DIRECT");
+        ChatEntity active = new ChatEntity();
+        active.setId(UUID.randomUUID());
+        active.setType("DIRECT");
+        when(chatRepository.findAccessibleChats(companyId, employeeId, false)).thenReturn(List.of(empty, active));
+
+        kz.birchat.api.entity.ChatMessageEntity last = new kz.birchat.api.entity.ChatMessageEntity();
+        last.setContent("Привет");
+        last.setCreatedAt(java.time.LocalDateTime.now());
+        when(chatMessageRepository.findLatestGeneralChatMessages(eq(companyId), eq(empty.getId()), any()))
+                .thenReturn(List.of());
+        when(chatMessageRepository.findLatestGeneralChatMessages(eq(companyId), eq(active.getId()), any()))
+                .thenReturn(List.of(last));
+
+        UserEntity peerUser = new UserEntity();
+        peerUser.setId(directorId);
+        peerUser.setFullName("Нурлан Ахметов");
+        peerUser.setDisplayName("Нурлан");
+        peerUser.setInitials("НА");
+        ChatMemberEntity peerMember = new ChatMemberEntity();
+        peerMember.setUser(peerUser);
+        when(chatMemberRepository.findMembers(any())).thenReturn(List.of(peerMember));
+
+        List<kz.birchat.api.dto.ChatSummaryResponse> chats = service.getChats(companyId, employeeId);
+
+        assertEquals(1, chats.size());
+        assertEquals(active.getId(), chats.get(0).chatId());
+        assertNull(chats.get(0).name());
+        assertEquals(directorId, chats.get(0).peer().userId());
+        assertEquals("Нурлан Ахметов", chats.get(0).peer().fullName());
+    }
+
+    @Test
+    void employeeCreatesGroupWhenCompanyAllowsAndManagesIt() {
+        CompanyMemberEntity employee = companyMember(employeeId, "EMPLOYEE");
+        employee.getCompany().setMembersCanCreateGroups(true);
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(employee);
+        when(companyMemberRepository.findByCompanyIdAndStatusOrderByJoinedAtAsc(companyId, "ACTIVE"))
+                .thenReturn(List.of(employee));
+        when(chatRepository.save(any(ChatEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(chatMemberRepository.findMembers(any())).thenReturn(List.of());
+
+        ChatDetailsResponse response = service.createGroupChat(companyId, employeeId, new CreateGroupChatRequest("Склад", List.of()));
+
+        assertTrue(response.canManage());
+        assertEquals(employeeId, response.createdBy());
+    }
+
+    @Test
+    void groupCreatorCanRenameButOtherEmployeeCannot() {
+        ChatEntity group = new ChatEntity();
+        group.setId(UUID.randomUUID());
+        group.setType("GROUP");
+        UserEntity creator = new UserEntity();
+        creator.setId(employeeId);
+        group.setCreatedBy(creator);
+        when(chatAccessService.requireCompanyChat(companyId, group.getId())).thenReturn(group);
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(companyMember(employeeId, "EMPLOYEE"));
+        when(chatMemberRepository.findMembers(any())).thenReturn(List.of());
+
+        assertEquals("Новое", service.renameChat(companyId, group.getId(), employeeId, "Новое").name());
+
+        UUID otherId = UUID.randomUUID();
+        when(currentUserService.requireActiveMember(companyId, otherId)).thenReturn(companyMember(otherId, "EMPLOYEE"));
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> service.renameChat(companyId, group.getId(), otherId, "Чужое"));
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+    }
+
+    @Test
+    void deletedGroupIsHiddenAndMembersLeave() {
+        ChatEntity group = new ChatEntity();
+        group.setId(UUID.randomUUID());
+        group.setType("GROUP");
+        when(chatAccessService.requireCompanyChat(companyId, group.getId())).thenReturn(group);
+        when(currentUserService.requireActiveMember(companyId, directorId)).thenReturn(companyMember(directorId, "DIRECTOR"));
+        when(chatMessageActionsService.recipients(companyId, group)).thenReturn(new java.util.HashSet<>(java.util.Set.of(directorId, employeeId)));
+
+        java.util.Set<UUID> participants = service.deleteGroup(companyId, group.getId(), directorId);
+
+        assertEquals(java.util.Set.of(directorId, employeeId), participants);
+        assertNotNull(group.getDeletedAt());
+        assertEquals(directorId, group.getDeletedBy());
+        verify(chatMemberRepository).deleteByChatId(group.getId());
+    }
+
+    @Test
+    void employeeCannotPinInGeneralChat() {
+        ChatEntity general = new ChatEntity();
+        general.setId(UUID.randomUUID());
+        general.setType("GENERAL");
+        when(chatAccessService.requireReadableChat(companyId, general.getId(), employeeId)).thenReturn(general);
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(companyMember(employeeId, "EMPLOYEE"));
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> service.pinMessage(companyId, general.getId(), UUID.randomUUID(), employeeId));
+
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+        verify(chatRepository, never()).save(any());
     }
 
     private CompanyMemberEntity companyMember(UUID userId, String roleCode) {

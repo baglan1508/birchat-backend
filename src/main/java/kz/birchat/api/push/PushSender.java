@@ -17,4 +17,11 @@ public interface PushSender {
      * @param payloadJson тело уведомления (JSON)
      */
     Result send(String deviceToken, String environment, String payloadJson);
+
+    /**
+     * Тихое обновление (только бейдж): низкий приоритет, Apple доставляет его, когда удобно телефону.
+     */
+    default Result sendQuiet(String deviceToken, String environment, String payloadJson) {
+        return send(deviceToken, environment, payloadJson);
+    }
 }

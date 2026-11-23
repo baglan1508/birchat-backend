@@ -22,4 +22,8 @@ public interface ChatAttachmentRepository extends JpaRepository<ChatAttachmentEn
     List<ChatAttachmentEntity> findByMessageIds(
             @Param("messageIds") Collection<UUID> messageIds
     );
+
+    /** Чаты, в которых прикреплён файл (исходный и куда его переслали). */
+    @Query("SELECT DISTINCT a.chat FROM ChatAttachmentEntity a WHERE a.file.id = :fileId")
+    List<kz.birchat.api.entity.ChatEntity> findChatsByFileId(@Param("fileId") UUID fileId);
 }

@@ -3,6 +3,7 @@ package kz.birchat.api.service;
 import kz.birchat.api.dto.CompanyHomeResponse;
 import kz.birchat.api.dto.CompanyResponse;
 import kz.birchat.api.dto.CreateCompanyRequest;
+import kz.birchat.api.dto.UpdateCompanyRequest;
 import kz.birchat.api.entity.*;
 import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
@@ -31,9 +32,16 @@ public class CompanyService {
     private final ChatRepository chatRepository;
     private final ChatMessageRepository chatMessageRepository;
     private final ChatReadStateRepository chatReadStateRepository;
+    private final ChatService chatService;
 
-    @Transactional(readOnly = true)
+    /**
+     * Компании пользователя. Заодно он «заходит» во все компании, куда его добавили:
+     * с этого момента коллеги видят его имя и фото из профиля.
+     */
+    @Transactional
     public List<CompanyResponse> getMyCompanies(UUID userId) {
+        companyMemberRepository.markAccepted(userId, TimeUtils.utcNow());
+
         List<CompanyMemberEntity> memberships =
                 companyMemberRepository.findByUserIdAndStatus(userId, "ACTIVE");
 
@@ -72,6 +80,41 @@ public class CompanyService {
         companyRepository.save(company);
 
         companyMemberRepository.changeActiveStatus(companyId, MEMBER_STATUS_COMPANY_DELETED);
+    }
+
+    /**
+     * Настройки компании — только директор. Меняются только переданные поля.
+     */
+    @Transactional
+    public CompanyResponse updateCompany(UUID companyId, UUID userId, UpdateCompanyRequest request) {
+        CompanyMemberEntity member = companyMemberRepository
+                .findByCompanyIdAndUserIdAndStatus(companyId, userId, "ACTIVE")
+                .orElseThrow(() -> ApiException.forbidden(
+                        ApiErrorCode.NOT_A_MEMBER,
+                        "Пользователь не состоит в этой компании"
+                ));
+
+        if (member.getRole() == null || !"DIRECTOR".equals(member.getRole().getCode())) {
+            throw ApiException.forbidden(
+                    ApiErrorCode.FORBIDDEN,
+                    "Настройки компании меняет только директор"
+            );
+        }
+
+        CompanyEntity company = member.getCompany();
+
+        if (request != null && request.aiEnabled() != null) {
+            company.setAiEnabled(request.aiEnabled());
+        }
+
+        if (request != null && request.membersCanCreateGroups() != null) {
+            company.setMembersCanCreateGroups(request.membersCanCreateGroups());
+        }
+
+        company.setUpdatedAt(TimeUtils.utcNow());
+        companyRepository.save(company);
+
+        return toResponse(member);
     }
 
     @Transactional(readOnly = true)
@@ -144,7 +187,8 @@ public class CompanyService {
                         company.getField(),
                         company.getLogoUrl(),
                         company.getInitial(),
-                        company.getColorHex()
+                        company.getColorHex(),
+                        company.isAiEnabled()
                 ),
                 new CompanyHomeResponse.GeneralChatInfo(
                         generalChat.getId(),
@@ -152,7 +196,11 @@ public class CompanyService {
                         messagesCount,
                         unreadCount,
                         lastMessage,
-                        lastMessageAt
+                        lastMessageAt,
+                        generalChat.getPinnedMessage() == null
+                                || Boolean.TRUE.equals(generalChat.getPinnedMessage().getIsDeleted())
+                                ? null
+                                : chatService.toResponses(List.of(generalChat.getPinnedMessage()), userId).get(0)
                 ),
                 new CompanyHomeResponse.AiDirectorInfo(
                         aiDirectorAvailable,
@@ -182,6 +230,7 @@ public class CompanyService {
         company.setColorHex(request.color() != null ? request.color() : "#2563EB");
         company.setOwner(owner);
         company.setStatus("ACTIVE");
+        company.setAiEnabled(false);
         company.setCreatedAt(now);
         company.setUpdatedAt(now);
 
@@ -195,6 +244,7 @@ public class CompanyService {
         member.setPosition("Директор");
         member.setStatus("ACTIVE");
         member.setJoinedAt(now);
+        member.setAcceptedAt(now);
 
         companyMemberRepository.save(member);
 
@@ -219,7 +269,9 @@ public class CompanyService {
                 directorRole.getCode(),
                 directorRole.getName(),
                 "Директор",
-                generalChat.getId()
+                generalChat.getId(),
+                savedCompany.isAiEnabled(),
+                savedCompany.isMembersCanCreateGroups()
         );
     }
 
@@ -244,7 +296,9 @@ public class CompanyService {
                 member.getPosition(),
                 chatRepository.findByCompanyIdAndType(company.getId(), "GENERAL")
                         .map(ChatEntity::getId)
-                        .orElse(null)
+                        .orElse(null),
+                company.isAiEnabled(),
+                company.isMembersCanCreateGroups()
         );
     }
 

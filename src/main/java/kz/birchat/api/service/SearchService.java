@@ -37,6 +37,11 @@ public class SearchService {
     private final ChatMessageRepository chatMessageRepository;
     private final CompanyFileRepository companyFileRepository;
     private final CompanyMemberRepository companyMemberRepository;
+    private final ChatAccessService chatAccessService;
+
+    public static final String TYPE_ALL = "all";
+    public static final String TYPE_MESSAGES = "messages";
+    public static final String TYPE_FILES = "files";
 
     @Transactional(readOnly = true)
     public List<SearchResultResponse> search(
@@ -45,28 +50,47 @@ public class SearchService {
             String query,
             Integer limit
     ) {
+        return search(companyId, userId, query, limit, null, null);
+    }
+
+    /**
+     * chatId — только этот чат ("general" — общий чат и файлы компании); type — all, messages или files.
+     */
+    @Transactional(readOnly = true)
+    public List<SearchResultResponse> search(
+            UUID companyId,
+            UUID userId,
+            String query,
+            Integer limit,
+            String chatId,
+            String type
+    ) {
         String normalizedQuery = normalizeQuery(query);
         int safeLimit = normalizeLimit(limit);
+        String resultType = normalizeType(type);
 
         CompanyMemberEntity member = requireActiveMember(companyId, userId);
         boolean director = member.getRole() != null
                 && "DIRECTOR".equals(member.getRole().getCode());
 
+        ChatAccessService.ChatScope scope = chatAccessService.resolveScope(companyId, chatId, userId);
         PageRequest pageRequest = PageRequest.of(0, safeLimit);
 
-        List<SearchResultResponse> messageResults = searchMessages(
+        List<SearchResultResponse> messageResults = TYPE_FILES.equals(resultType) ? List.of() : searchMessages(
                 companyId,
                 userId,
                 director,
                 normalizedQuery,
+                scope.messageChatFilter(),
                 safeLimit
         )
                 .stream()
                 .map(this::toMessageResult)
                 .toList();
 
-        List<SearchResultResponse> fileResults = companyFileRepository
-                .searchAccessibleFiles(companyId, userId, director, normalizedQuery, pageRequest)
+        List<SearchResultResponse> fileResults = TYPE_MESSAGES.equals(resultType) ? List.of() : companyFileRepository
+                .searchAccessibleFiles(companyId, userId, director, normalizedQuery,
+                        scope.scope(), scope.chatId(), pageRequest)
                 .stream()
                 .map(this::toFileResult)
                 .toList();
@@ -86,6 +110,7 @@ public class SearchService {
             UUID userId,
             boolean director,
             String query,
+            String chatFilter,
             int limit
     ) {
         if (!hasLettersOrDigits(query)) {
@@ -93,7 +118,7 @@ public class SearchService {
         }
 
         List<UUID> ids = chatMessageRepository
-                .searchAccessibleMessageIds(companyId, userId, director, query, limit)
+                .searchAccessibleMessageIds(companyId, userId, director, query, chatFilter, limit)
                 .stream()
                 .map(UUID::fromString)
                 .toList();
@@ -149,6 +174,20 @@ public class SearchService {
                     ApiErrorCode.VALIDATION,
                     "query не должен превышать " + MAX_QUERY_LENGTH + " символов"
             );
+        }
+
+        return value;
+    }
+
+    private String normalizeType(String type) {
+        if (type == null || type.isBlank()) {
+            return TYPE_ALL;
+        }
+
+        String value = type.trim().toLowerCase();
+
+        if (!TYPE_ALL.equals(value) && !TYPE_MESSAGES.equals(value) && !TYPE_FILES.equals(value)) {
+            throw ApiException.badRequest(ApiErrorCode.VALIDATION, "type: all, messages или files");
         }
 
         return value;

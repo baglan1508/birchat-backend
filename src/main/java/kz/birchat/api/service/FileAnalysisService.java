@@ -110,6 +110,12 @@ public class FileAnalysisService {
     public int processPending() {
         int batchSize = aiProperties.getMedia() == null ? 5 : Math.max(1, aiProperties.getMedia().getBatchSize());
 
+        Integer skipped = tx().execute(status -> companyFileRepository.skipPendingOfCompaniesWithoutAi());
+
+        if (skipped != null && skipped > 0) {
+            log.info("File AI analysis skipped: company AI is off. files={}", skipped);
+        }
+
         List<UUID> ids = readTx().execute(status -> companyFileRepository
                 .findPendingForAi(TimeUtils.utcNow(), PageRequest.of(0, batchSize))
                 .stream()

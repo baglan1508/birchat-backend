@@ -2,6 +2,7 @@ package kz.birchat.api.repository;
 
 import kz.birchat.api.entity.ChatMemberEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -38,4 +39,20 @@ public interface ChatMemberRepository extends JpaRepository<ChatMemberEntity, UU
 
     @Query("SELECT m.user.id FROM ChatMemberEntity m WHERE m.chat.id = :chatId")
     List<UUID> findUserIdsByChatId(@Param("chatId") UUID chatId);
+
+    /** Убрать человека из всех групп компании (сотрудника убрали из компании). */
+    @Modifying
+    @Query("""
+            DELETE FROM ChatMemberEntity cm
+            WHERE cm.user.id = :userId
+              AND cm.chat.id IN (
+                    SELECT c.id FROM ChatEntity c
+                    WHERE c.company.id = :companyId AND c.type = 'GROUP'
+              )
+            """)
+    int deleteFromCompanyGroups(@Param("companyId") UUID companyId, @Param("userId") UUID userId);
+
+    @Modifying
+    @Query("DELETE FROM ChatMemberEntity cm WHERE cm.chat.id = :chatId")
+    int deleteByChatId(@Param("chatId") UUID chatId);
 }

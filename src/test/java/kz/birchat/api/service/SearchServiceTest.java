@@ -44,11 +44,19 @@ class SearchServiceTest {
     @Mock
     private CompanyMemberRepository companyMemberRepository;
 
+    @Mock
+    private ChatAccessService chatAccessService;
+
     @InjectMocks
     private SearchService searchService;
 
     private final UUID companyId = UUID.randomUUID();
     private final UUID userId = UUID.randomUUID();
+
+    @org.junit.jupiter.api.BeforeEach
+    void allChats() {
+        lenient().when(chatAccessService.resolveScope(any(), any(), any())).thenReturn(ChatAccessService.ChatScope.all());
+    }
 
     @Test
     void outsiderCannotSearchCompanyData() {
@@ -67,10 +75,10 @@ class SearchServiceTest {
     void employeeSearchIsLimitedToTheirChats() {
         mockMember("EMPLOYEE");
         when(chatMessageRepository.searchAccessibleMessageIds(
-                companyId, userId, false, "test", 20))
+                companyId, userId, false, "test", "", 20))
                 .thenReturn(List.of());
         when(companyFileRepository.searchAccessibleFiles(
-                eq(companyId), eq(userId), eq(false), eq("test"), any(Pageable.class)))
+                eq(companyId), eq(userId), eq(false), eq("test"), eq("ALL"), any(), any(Pageable.class)))
                 .thenReturn(List.of());
 
         assertTrue(searchService.search(companyId, userId, "test", 20).isEmpty());
@@ -80,10 +88,10 @@ class SearchServiceTest {
     void directorSearchesAllChats() {
         mockMember("DIRECTOR");
         when(chatMessageRepository.searchAccessibleMessageIds(
-                companyId, userId, true, "test", 20))
+                companyId, userId, true, "test", "", 20))
                 .thenReturn(List.of());
         when(companyFileRepository.searchAccessibleFiles(
-                eq(companyId), eq(userId), eq(true), eq("test"), any(Pageable.class)))
+                eq(companyId), eq(userId), eq(true), eq("test"), eq("ALL"), any(), any(Pageable.class)))
                 .thenReturn(List.of());
 
         assertTrue(searchService.search(companyId, userId, "test", 20).isEmpty());
@@ -95,7 +103,7 @@ class SearchServiceTest {
         ChatMessageEntity newer = message("Подписали договора", LocalDateTime.of(2026, 11, 11, 10, 0));
         ChatMessageEntity older = message("Договор аренды", LocalDateTime.of(2026, 11, 10, 10, 0));
 
-        when(chatMessageRepository.searchAccessibleMessageIds(companyId, userId, false, "договоры", 20))
+        when(chatMessageRepository.searchAccessibleMessageIds(companyId, userId, false, "договоры", "", 20))
                 .thenReturn(List.of(newer.getId().toString(), older.getId().toString()));
         when(chatMessageRepository.findAllWithUserAndChatByIdIn(List.of(newer.getId(), older.getId())))
                 .thenReturn(List.of(older, newer));
@@ -115,9 +123,10 @@ class SearchServiceTest {
         assertTrue(searchService.search(companyId, userId, "!!", 20).isEmpty());
 
         verify(chatMessageRepository, never())
-                .searchAccessibleMessageIds(any(), any(), anyBoolean(), anyString(), anyInt());
+                .searchAccessibleMessageIds(any(), any(), anyBoolean(), anyString(), anyString(), anyInt());
         verify(companyFileRepository)
-                .searchAccessibleFiles(eq(companyId), eq(userId), eq(false), eq("!!"), any(Pageable.class));
+                .searchAccessibleFiles(
+                eq(companyId), eq(userId), eq(false), eq("!!"), eq("ALL"), any(), any(Pageable.class));
     }
 
     @Test
@@ -126,7 +135,29 @@ class SearchServiceTest {
 
         searchService.search(companyId, userId, "договор", 500);
 
-        verify(chatMessageRepository).searchAccessibleMessageIds(companyId, userId, true, "договор", 50);
+        verify(chatMessageRepository).searchAccessibleMessageIds(companyId, userId, true, "договор", "", 50);
+    }
+
+    @Test
+    void searchInOneChatOnlyMessages() {
+        mockMember("EMPLOYEE");
+        kz.birchat.api.entity.ChatEntity group = new kz.birchat.api.entity.ChatEntity();
+        group.setId(UUID.randomUUID());
+        when(chatAccessService.resolveScope(companyId, group.getId().toString(), userId))
+                .thenReturn(new ChatAccessService.ChatScope("CHAT", group.getId(), group));
+
+        searchService.search(companyId, userId, "счёт", 20, group.getId().toString(), "messages");
+
+        verify(chatMessageRepository).searchAccessibleMessageIds(companyId, userId, false, "счёт", group.getId().toString(), 20);
+        verifyNoInteractions(companyFileRepository);
+    }
+
+    @Test
+    void unknownResultTypeIsRejected() {
+        ApiException exception = assertThrows(ApiException.class,
+                () -> searchService.search(companyId, userId, "счёт", 20, null, "photos"));
+
+        assertEquals(ApiErrorCode.VALIDATION, exception.getCode());
     }
 
     @Test

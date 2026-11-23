@@ -3,17 +3,22 @@ package kz.birchat.api.service;
 import kz.birchat.api.auth.CurrentUserService;
 import kz.birchat.api.dto.DeletedMessagesResponse;
 import kz.birchat.api.dto.MessageReadersResponse;
+import kz.birchat.api.dto.ReactionSummary;
 import kz.birchat.api.entity.ChatEntity;
 import kz.birchat.api.entity.ChatMessageEntity;
+import kz.birchat.api.entity.ChatMessageReactionEntity;
 import kz.birchat.api.entity.ChatReadStateEntity;
 import kz.birchat.api.entity.CompanyMemberEntity;
 import kz.birchat.api.entity.UserEntity;
 import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
 import kz.birchat.api.repository.ChatMemberRepository;
+import kz.birchat.api.repository.ChatMessageReactionRepository;
 import kz.birchat.api.repository.ChatMessageRepository;
 import kz.birchat.api.repository.ChatReadStateRepository;
+import kz.birchat.api.repository.ChatRepository;
 import kz.birchat.api.repository.CompanyMemberRepository;
+import kz.birchat.api.repository.UserRepository;
 import kz.birchat.api.util.TimeUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -23,9 +28,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -44,6 +52,9 @@ public class ChatMessageActionsService {
     private final ChatReadStateRepository chatReadStateRepository;
     private final ChatMemberRepository chatMemberRepository;
     private final CompanyMemberRepository companyMemberRepository;
+    private final ChatMessageReactionRepository chatMessageReactionRepository;
+    private final ChatRepository chatRepository;
+    private final UserRepository userRepository;
 
     /**
      * Удалить сообщение у всех. Может автор сообщения или директор компании.
@@ -51,12 +62,12 @@ public class ChatMessageActionsService {
      * Повторное удаление — не ошибка.
      */
     @Transactional
-    public void deleteForEveryone(UUID companyId, UUID chatId, UUID messageId, UUID userId) {
+    public boolean deleteForEveryone(UUID companyId, UUID chatId, UUID messageId, UUID userId) {
         ChatEntity chat = chatAccessService.requireReadableChat(companyId, chatId, userId);
         ChatMessageEntity message = requireMessage(chat, messageId);
 
         if (Boolean.TRUE.equals(message.getIsDeleted())) {
-            return;
+            return false;
         }
 
         boolean author = message.getUser() != null && userId.equals(message.getUser().getId());
@@ -74,6 +85,96 @@ public class ChatMessageActionsService {
         message.setDeletedBy(userId);
         message.setUpdatedAt(now);
         chatMessageRepository.save(message);
+
+        // Закреплённое сообщение удалили — закреп снимается.
+        if (chat.getPinnedMessage() != null && messageId.equals(chat.getPinnedMessage().getId())) {
+            chat.setPinnedMessage(null);
+            chatRepository.save(chat);
+            return true;
+        }
+
+        return false;
+    }
+
+    /** Разрешённые реакции. «❤» без вариационного селектора считается тем же сердцем. */
+    public static final List<String> REACTIONS = List.of("👍", "❤️", "😂", "😮", "😢", "🙏");
+
+    static String normalizeEmoji(String emoji) {
+        String value = emoji == null ? "" : emoji.trim();
+
+        if ("❤".equals(value)) {
+            value = "❤️";
+        }
+
+        if (!REACTIONS.contains(value)) {
+            throw ApiException.badRequest(ApiErrorCode.VALIDATION, "Реакция должна быть одной из: " + String.join(" ", REACTIONS));
+        }
+
+        return value;
+    }
+
+    /** Поставить реакцию. У человека одна реакция на сообщение: новая заменяет прежнюю. */
+    @Transactional
+    public List<ReactionSummary> addReaction(UUID companyId, UUID chatId, UUID messageId, UUID userId, String emoji) {
+        String value = normalizeEmoji(emoji);
+        ChatEntity chat = chatAccessService.requireReadableChat(companyId, chatId, userId);
+        ChatMessageEntity message = requireLiveMessage(chat, messageId);
+
+        ChatMessageReactionEntity reaction = chatMessageReactionRepository
+                .findByMessageIdAndUserId(message.getId(), userId)
+                .orElseGet(() -> {
+                    ChatMessageReactionEntity created = new ChatMessageReactionEntity();
+                    created.setId(UUID.randomUUID());
+                    created.setMessage(message);
+                    created.setUser(userRepository.getReferenceById(userId));
+                    return created;
+                });
+
+        reaction.setEmoji(value);
+        reaction.setCreatedAt(TimeUtils.utcNow());
+        chatMessageReactionRepository.save(reaction);
+        chatMessageReactionRepository.flush();
+
+        return reactionSummary(message.getId());
+    }
+
+    /** Убрать свою реакцию, если она такая. Нет такой — не ошибка. */
+    @Transactional
+    public List<ReactionSummary> removeReaction(UUID companyId, UUID chatId, UUID messageId, UUID userId, String emoji) {
+        String value = normalizeEmoji(emoji);
+        ChatEntity chat = chatAccessService.requireReadableChat(companyId, chatId, userId);
+        ChatMessageEntity message = requireLiveMessage(chat, messageId);
+
+        chatMessageReactionRepository.findByMessageIdAndUserId(message.getId(), userId)
+                .filter(reaction -> value.equals(reaction.getEmoji()))
+                .ifPresent(reaction -> {
+                    chatMessageReactionRepository.delete(reaction);
+                    chatMessageReactionRepository.flush();
+                });
+
+        return reactionSummary(message.getId());
+    }
+
+    List<ReactionSummary> reactionSummary(UUID messageId) {
+        Map<String, List<UUID>> byEmoji = new LinkedHashMap<>();
+
+        for (ChatMessageReactionEntity reaction : chatMessageReactionRepository.findByMessageIds(List.of(messageId))) {
+            byEmoji.computeIfAbsent(reaction.getEmoji(), key -> new ArrayList<>()).add(reaction.getUser().getId());
+        }
+
+        return byEmoji.entrySet().stream()
+                .map(entry -> new ReactionSummary(entry.getKey(), entry.getValue().size(), entry.getValue()))
+                .toList();
+    }
+
+    private ChatMessageEntity requireLiveMessage(ChatEntity chat, UUID messageId) {
+        ChatMessageEntity message = requireMessage(chat, messageId);
+
+        if (Boolean.TRUE.equals(message.getIsDeleted())) {
+            throw ApiException.notFound(ApiErrorCode.MESSAGE_NOT_FOUND, "Сообщение не найдено");
+        }
+
+        return message;
     }
 
     /** Сообщения чата, удалённые у всех после since. */
@@ -134,7 +235,10 @@ public class ChatMessageActionsService {
                 && !readUpTo.isBefore(message.getCreatedAt());
     }
 
-    /** Кто сейчас в чате: общий — все активные сотрудники; группа — участники и директор. */
+    /**
+     * Кто сейчас в чате: общий — все активные сотрудники; группа — участники и директор;
+     * личный — двое участников (если ещё в компании).
+     */
     public Set<UUID> recipients(UUID companyId, ChatEntity chat) {
         List<CompanyMemberEntity> active = companyMemberRepository
                 .findByCompanyIdAndStatusOrderByJoinedAtAsc(companyId, "ACTIVE");
@@ -150,7 +254,9 @@ public class ChatMessageActionsService {
         for (CompanyMemberEntity member : active) {
             UUID id = member.getUser().getId();
 
-            if (chatMembers.contains(id) || CurrentUserService.isDirector(member)) {
+            boolean directorSeesGroup = !ChatAccessService.isDirect(chat) && CurrentUserService.isDirector(member);
+
+            if (chatMembers.contains(id) || directorSeesGroup) {
                 result.add(id);
             }
         }

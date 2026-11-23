@@ -382,7 +382,8 @@ public class GlmAiProvider implements AiProvider {
                 Ты AI Assistant внутри корпоративного приложения BirChat.
                 Отвечай на русском языке.
                 Отвечай кратко, понятно и по делу.
-                У тебя может быть передан контекст последних сообщений общего чата компании.
+                У тебя может быть передан контекст последних сообщений общего чата и групп компании;
+                у каждого сообщения в скобках указано, из какого оно чата.
                 Используй этот контекст только как справочную информацию.
                 Контекст может быть неполным, потому что передаются только последние сообщения.
                 Если вопрос требует данных, которых нет в контексте, честно скажи, что данных недостаточно.
@@ -394,7 +395,8 @@ public class GlmAiProvider implements AiProvider {
     private String buildSummarySystemPrompt() {
         return """
                 Ты AI Assistant внутри корпоративного приложения BirChat.
-                Твоя задача — делать краткую рабочую сводку по сообщениям общего чата компании.
+                Твоя задача — делать краткую рабочую сводку по сообщениям общего чата и групп компании.
+                У каждого сообщения в скобках указан чат с номером, например (#2 Группа «Склад»).
                 Отвечай на русском языке.
                 Не выдумывай факты, которых нет в сообщениях.
                 Если данных мало, честно напиши, что данных недостаточно.
@@ -409,6 +411,10 @@ public class GlmAiProvider implements AiProvider {
                 - Первый важный пункт
                 - Второй важный пункт
                 - Третий важный пункт
+                SECTION #1: 1-2 предложения о главном в чате #1.
+                SECTION #2: 1-2 предложения о главном в чате #2.
+
+                Строку SECTION пиши для каждого чата из сообщений, с его номером.
                 """;
     }
 
@@ -417,7 +423,7 @@ public class GlmAiProvider implements AiProvider {
                 Период сводки:
                 %s — %s
                 
-                Сообщения общего чата компании:
+                Сообщения общего чата и групп компании:
                 %s
                 
                 Сформируй краткую сводку для директора и сотрудников компании.
@@ -443,7 +449,7 @@ public class GlmAiProvider implements AiProvider {
                 .collect(Collectors.joining("\n"));
 
         return """
-                Контекст последних сообщений общего чата компании:
+                Контекст последних сообщений общего чата и групп компании:
                 %s
                 """.formatted(messages);
     }
@@ -452,6 +458,10 @@ public class GlmAiProvider implements AiProvider {
         String createdAt = isBlank(message.createdAt()) ? "unknown-time" : message.createdAt();
         String author = isBlank(message.author()) ? "Пользователь" : message.author();
         String content = isBlank(message.content()) ? "" : sanitizeContent(message.content());
+
+        if (!isBlank(message.source())) {
+            return "- [%s] (%s) %s: %s".formatted(createdAt, message.source().trim(), author, content);
+        }
 
         return "- [%s] %s: %s".formatted(
                 createdAt,
@@ -476,6 +486,8 @@ public class GlmAiProvider implements AiProvider {
         String title = "Сводка за сегодня";
         StringBuilder summaryBuilder = new StringBuilder();
         List<String> items = new ArrayList<>();
+        java.util.Map<Integer, StringBuilder> sections = new java.util.LinkedHashMap<>();
+        Integer currentSection = null;
 
         String mode = "";
 
@@ -489,6 +501,27 @@ public class GlmAiProvider implements AiProvider {
             }
 
             String upper = trimmed.toUpperCase();
+
+            java.util.regex.Matcher section = SECTION_LINE.matcher(trimmed);
+
+            if (section.matches()) {
+                currentSection = Integer.parseInt(section.group(1));
+                sections.computeIfAbsent(currentSection, key -> new StringBuilder()).append(section.group(2).trim());
+                mode = "SECTION";
+                continue;
+            }
+
+            if ("SECTION".equals(mode) && currentSection != null
+                    && !upper.startsWith("TITLE:") && !upper.startsWith("SUMMARY:") && !upper.startsWith("ITEMS:")) {
+                StringBuilder text = sections.get(currentSection);
+
+                if (!text.isEmpty()) {
+                    text.append(" ");
+                }
+
+                text.append(trimmed);
+                continue;
+            }
 
             if (upper.startsWith("TITLE:")) {
                 title = trimmed.substring("TITLE:".length()).trim();
@@ -548,13 +581,24 @@ public class GlmAiProvider implements AiProvider {
             );
         }
 
+        List<AiSummaryProviderResponse.Section> sectionList = sections.entrySet().stream()
+                .filter(entry -> !entry.getValue().toString().isBlank())
+                .map(entry -> new AiSummaryProviderResponse.Section(entry.getKey(), entry.getValue().toString().trim()))
+                .toList();
+
         return new AiSummaryProviderResponse(
                 title,
                 summary,
                 items,
-                model
+                model,
+                sectionList
         );
     }
+
+    /** «SECTION #2: текст», «SECTION 2 — текст». */
+    private static final java.util.regex.Pattern SECTION_LINE = java.util.regex.Pattern.compile(
+            "(?i)^\\s*SECTION\\s*#?\\s*(\\d+)\\s*[:\\-–—]\\s*(.*)$"
+    );
 
     private static String withoutLabelLines(String rawAnswer) {
         return rawAnswer.lines()
@@ -562,6 +606,7 @@ public class GlmAiProvider implements AiProvider {
                 .filter(line -> !line.isBlank())
                 .filter(line -> !line.toUpperCase().startsWith("TITLE:"))
                 .filter(line -> !line.toUpperCase().startsWith("ITEMS:"))
+                .filter(line -> !line.toUpperCase().startsWith("SECTION"))
                 .collect(Collectors.joining(" "))
                 .trim();
     }

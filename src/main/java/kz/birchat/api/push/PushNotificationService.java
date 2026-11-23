@@ -8,6 +8,7 @@ import kz.birchat.api.entity.ChatEntity;
 import kz.birchat.api.entity.ChatMessageEntity;
 import kz.birchat.api.entity.CompanyMemberEntity;
 import kz.birchat.api.repository.ChatAttachmentRepository;
+import kz.birchat.api.repository.ChatMessageMentionRepository;
 import kz.birchat.api.repository.ChatMessageRepository;
 import kz.birchat.api.repository.CompanyMemberRepository;
 import kz.birchat.api.service.ChatAccessService;
@@ -21,6 +22,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +52,8 @@ public class PushNotificationService {
     private final CompanyMemberRepository companyMemberRepository;
     private final ChatMessageActionsService chatMessageActionsService;
     private final ChatManagementService chatManagementService;
+    private final ChatMessageMentionRepository chatMessageMentionRepository;
+    private final FcmClient fcmClient;
     private final PlatformTransactionManager transactionManager;
     private final ObjectMapper objectMapper;
 
@@ -65,12 +69,106 @@ public class PushNotificationService {
             (task, pool) -> log.warn("Push queue is full, a notification was skipped")
     );
 
-    record Outgoing(String deviceToken, String environment, String payloadJson) {
+    /** platform — IOS (payloadJson для APNs) или ANDROID (payloadJson — объект «message» FCM без token). */
+    record Outgoing(String deviceToken, String environment, String payloadJson, String platform) {
+
+        Outgoing(String deviceToken, String environment, String payloadJson) {
+            this(deviceToken, environment, payloadJson, DeviceService.PLATFORM_IOS);
+        }
+    }
+
+    /** Последний бейдж, отправленный пользователю, — чтобы не слать тихий пуш с той же цифрой. */
+    private final Map<UUID, Integer> lastBadge = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Пользователь что-то прочитал: тихий пуш с новым бейджем на его устройства, чтобы цифра
+     * на иконке не висела, когда всё прочитано на другом телефоне. Ничего не бросает.
+     */
+    public void badgeChanged(UUID userId) {
+        if (userId == null || !pushSender.isConfigured()) {
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                deliverBadge(userId);
+            } catch (Exception ex) {
+                log.error("Badge push failed. userId={}", userId, ex);
+            }
+        });
+    }
+
+    void deliverBadge(UUID userId) {
+        TransactionTemplate readTx = new TransactionTemplate(transactionManager);
+        readTx.setReadOnly(true);
+
+        record Badge(List<DeviceTokenEntity> devices, int badge) {
+        }
+
+        Badge badge = readTx.execute(status -> {
+            // Бейдж на Android рисует лаунчер сам — тихий пуш только на iPhone.
+            List<DeviceTokenEntity> devices = deviceTokenRepository.findByUserIdIn(Set.of(userId)).stream()
+                    .filter(device -> !DeviceService.PLATFORM_ANDROID.equals(device.getPlatform()))
+                    .toList();
+            return devices.isEmpty() ? null : new Badge(devices, unreadTotal(userId));
+        });
+
+        if (badge == null) {
+            return;
+        }
+
+        Integer previous = rememberBadge(userId, badge.badge());
+
+        if (previous != null && previous == badge.badge()) {
+            return;
+        }
+
+        String payload = toJson(Map.<String, Object>of("aps", Map.of("badge", badge.badge())));
+        List<String> invalidTokens = new ArrayList<>();
+
+        for (DeviceTokenEntity device : badge.devices()) {
+            if (pushSender.sendQuiet(device.getToken(), device.getEnvironment(), payload)
+                    == PushSender.Result.INVALID_TOKEN) {
+                invalidTokens.add(device.getToken());
+            }
+        }
+
+        if (!invalidTokens.isEmpty()) {
+            new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                    invalidTokens.forEach(deviceTokenRepository::deleteByTokenValue));
+        }
+    }
+
+    private Integer rememberBadge(UUID userId, int badge) {
+        if (lastBadge.size() > 50_000) {
+            lastBadge.clear();
+        }
+
+        return lastBadge.put(userId, badge);
+    }
+
+    private PushSender.Result send(Outgoing notification) {
+        if (DeviceService.PLATFORM_ANDROID.equals(notification.platform())) {
+            try {
+                return fcmClient.send(notification.deviceToken(), objectMapper.readTree(notification.payloadJson()));
+            } catch (Exception ex) {
+                log.warn("FCM payload error: {}", ex.toString());
+                return PushSender.Result.FAILED;
+            }
+        }
+
+        return pushSender.send(notification.deviceToken(), notification.environment(), notification.payloadJson());
+    }
+
+    private boolean canSend(DeviceTokenEntity device) {
+        return DeviceService.PLATFORM_ANDROID.equals(device.getPlatform())
+                ? fcmClient.isConfigured()
+                : pushSender.isConfigured();
     }
 
     /** Вызывается после сохранения сообщения. Ничего не бросает. */
     public void messageCreated(UUID messageId) {
-        if (messageId == null || !pushSender.isConfigured()) {
+        if (messageId == null || (!pushSender.isConfigured() && !fcmClient.isConfigured())) {
             return;
         }
 
@@ -97,11 +195,7 @@ public class PushNotificationService {
 
         // Отправка — вне транзакции: соединение с базой не занято, пока отвечает Apple.
         for (Outgoing notification : notifications) {
-            PushSender.Result result = pushSender.send(
-                    notification.deviceToken(),
-                    notification.environment(),
-                    notification.payloadJson()
-            );
+            PushSender.Result result = send(notification);
 
             if (result == PushSender.Result.INVALID_TOKEN) {
                 invalidTokens.add(notification.deviceToken());
@@ -131,9 +225,19 @@ public class PushNotificationService {
         UUID authorId = message.getUser().getId();
         boolean general = ChatAccessService.isGeneral(chat);
 
+        boolean direct = ChatAccessService.isDirect(chat);
+
         Set<UUID> recipients = chatMessageActionsService.recipients(companyId, chat);
         recipients.remove(authorId);
-        recipients.removeIf(userId -> presenceTracker.isInChat(userId, chat.getId(), general ? companyId : null));
+
+        // Упомянутому push приходит, даже если чат у него открыт.
+        Set<UUID> mentioned = new HashSet<>();
+        chatMessageMentionRepository.findByMessageIds(List.of(messageId))
+                .forEach(mention -> mentioned.add(mention.getUser().getId()));
+        mentioned.retainAll(recipients);
+
+        recipients.removeIf(userId -> !mentioned.contains(userId)
+                && presenceTracker.isInChat(userId, chat.getId(), general ? companyId : null));
 
         if (recipients.isEmpty()) {
             return List.of();
@@ -159,14 +263,45 @@ public class PushNotificationService {
         List<Outgoing> result = new ArrayList<>();
 
         for (DeviceTokenEntity device : devices) {
-            int badge = badges.computeIfAbsent(device.getUserId(), this::unreadTotal);
-            String body = PushTextBuilder.body(authorName, message.getType(), message.getContent(), fileName, device.getLocale());
+            if (!canSend(device)) {
+                continue;
+            }
+
+            int badge = badges.computeIfAbsent(device.getUserId(), userId -> {
+                int total = unreadTotal(userId);
+                rememberBadge(userId, total);
+                return total;
+            });
+            String body;
+
+            if (mentioned.contains(device.getUserId())) {
+                body = PushTextBuilder.mentionBody(authorName, message.getType(), message.getContent(), fileName, device.getLocale());
+            } else if (direct) {
+                body = PushTextBuilder.text(message.getType(), message.getContent(), fileName, device.getLocale());
+            } else {
+                body = PushTextBuilder.body(authorName, message.getType(), message.getContent(), fileName, device.getLocale());
+            }
+
+            // Личный чат: заголовок — имя автора, без названия чата.
+            String title = direct ? authorName : companyName;
+            String subtitle = general || direct ? null : chat.getName();
+
+            if (DeviceService.PLATFORM_ANDROID.equals(device.getPlatform())) {
+                // В Android нет subtitle: название группы идёт в заголовок через « · ».
+                String androidTitle = subtitle == null ? title : title + " · " + subtitle;
+                result.add(new Outgoing(
+                        device.getToken(),
+                        device.getEnvironment(),
+                        toJson(androidMessage(androidTitle, body, companyId, chat.getId(), messageId)),
+                        DeviceService.PLATFORM_ANDROID
+                ));
+                continue;
+            }
 
             result.add(new Outgoing(
                     device.getToken(),
                     device.getEnvironment(),
-                    toJson(payload(companyName, general ? null : chat.getName(), body, badge,
-                            companyId, chat.getId(), messageId))
+                    toJson(payload(title, subtitle, body, badge, companyId, chat.getId(), messageId))
             ));
         }
 
@@ -184,6 +319,37 @@ public class PushNotificationService {
         }
 
         return (int) Math.min(total, 9999);
+    }
+
+    /**
+     * Сообщение FCM (без token). data — строки, title/body продублированы в data: если приложение открыто,
+     * уведомление показывает само приложение. tag = chatId: новое сообщение чата заменяет прежнее.
+     */
+    static Map<String, Object> androidMessage(String title, String body, UUID companyId, UUID chatId, UUID messageId) {
+        Map<String, Object> notification = new LinkedHashMap<>();
+        notification.put("title", title);
+        notification.put("body", body);
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("companyId", companyId.toString());
+        data.put("chatId", chatId.toString());
+        data.put("messageId", messageId.toString());
+        data.put("title", title);
+        data.put("body", body);
+
+        Map<String, Object> androidNotification = new LinkedHashMap<>();
+        androidNotification.put("channel_id", "messages");
+        androidNotification.put("tag", chatId.toString());
+
+        Map<String, Object> android = new LinkedHashMap<>();
+        android.put("priority", "HIGH");
+        android.put("notification", androidNotification);
+
+        Map<String, Object> message = new LinkedHashMap<>();
+        message.put("notification", notification);
+        message.put("data", data);
+        message.put("android", android);
+        return message;
     }
 
     /**

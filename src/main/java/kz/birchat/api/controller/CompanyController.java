@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import kz.birchat.api.dto.CompanyHomeResponse;
 import kz.birchat.api.dto.CompanyResponse;
 import kz.birchat.api.dto.CreateCompanyRequest;
+import kz.birchat.api.dto.UpdateCompanyRequest;
 import kz.birchat.api.service.CompanyService;
 import kz.birchat.api.auth.CurrentUser;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +34,16 @@ public class CompanyController {
             @CurrentUser UUID userId
     ) {
         return companyService.getCompanyHome(companyId, userId);
+    }
+
+    /** Настройки компании (только директор): aiEnabled. PATCH — то же самое. */
+    @RequestMapping(value = "/{companyId}", method = {RequestMethod.PUT, RequestMethod.PATCH})
+    public CompanyResponse updateCompany(
+            @PathVariable UUID companyId,
+            @CurrentUser UUID userId,
+            @RequestBody UpdateCompanyRequest request
+    ) {
+        return companyService.updateCompany(companyId, userId, request);
     }
 
     /** Удалить компанию (только директор). */

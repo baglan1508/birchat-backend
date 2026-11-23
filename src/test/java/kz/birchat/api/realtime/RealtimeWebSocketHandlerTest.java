@@ -90,6 +90,18 @@ class RealtimeWebSocketHandlerTest {
     }
 
     @Test
+    void viewingGeneralWithCompanyMarksGeneralChatOpen() throws Exception {
+        authenticate();
+        UUID companyId = UUID.randomUUID();
+        UUID generalChatId = UUID.randomUUID();
+
+        handler.handleMessage(session, new TextMessage(
+                "{\"type\":\"viewing\",\"chatId\":\"general\",\"companyId\":\"" + companyId + "\"}"));
+
+        assertTrue(presenceTracker.isInChat(userId, generalChatId, companyId));
+    }
+
+    @Test
     void closedConnectionIsForgotten() throws Exception {
         authenticate();
 

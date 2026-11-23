@@ -40,6 +40,15 @@ public class ChatMessageEntity {
     @JoinColumn(name = "reply_to_message_id")
     private ChatMessageEntity replyToMessage;
 
+    /** Откуда переслано (сообщение из этого или другого чата компании). */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "forwarded_from_message_id")
+    private ChatMessageEntity forwardedFromMessage;
+
+    /** Когда автор последний раз изменил текст; null — не редактировали. */
+    @Column(name = "edited_at")
+    private LocalDateTime editedAt;
+
     @Column(name = "is_deleted")
     private Boolean isDeleted;
 

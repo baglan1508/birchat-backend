@@ -48,6 +48,16 @@ public class ChatController {
         return chatManagementService.createGroupChat(companyId, userId, request);
     }
 
+    /** Личный чат с коллегой: существующий или новый. */
+    @PostMapping("/direct")
+    public ChatDetailsResponse openDirectChat(
+            @PathVariable UUID companyId,
+            @CurrentUser UUID userId,
+            @Valid @RequestBody CreateDirectChatRequest request
+    ) {
+        return chatManagementService.openDirectChat(companyId, userId, request.userId());
+    }
+
     @GetMapping("/{chatId}")
     public ChatDetailsResponse getChat(
             @PathVariable UUID companyId,
@@ -68,6 +78,42 @@ public class ChatController {
         ChatDetailsResponse chat = chatManagementService.renameChat(companyId, chatId, userId, request.name());
         realtimeEventService.chatRenamed(chatId, chat.name());
         return chat;
+    }
+
+    /** Удалить группу (директор или создатель). */
+    @DeleteMapping("/{chatId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteGroup(
+            @PathVariable UUID companyId,
+            @PathVariable UUID chatId,
+            @CurrentUser UUID userId
+    ) {
+        java.util.Set<UUID> participants = chatManagementService.deleteGroup(companyId, chatId, userId);
+        realtimeEventService.chatDeleted(companyId, chatId, participants);
+    }
+
+    /** Закрепить сообщение (одно на чат). */
+    @PostMapping("/{chatId}/pin")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void pinMessage(
+            @PathVariable UUID companyId,
+            @PathVariable UUID chatId,
+            @CurrentUser UUID userId,
+            @Valid @RequestBody PinMessageRequest request
+    ) {
+        ChatMessageResponse pinned = chatManagementService.pinMessage(companyId, chatId, request.messageId(), userId);
+        realtimeEventService.chatPinned(chatId, pinned);
+    }
+
+    @DeleteMapping("/{chatId}/pin")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void unpinMessage(
+            @PathVariable UUID companyId,
+            @PathVariable UUID chatId,
+            @CurrentUser UUID userId
+    ) {
+        chatManagementService.unpinMessage(companyId, chatId, userId);
+        realtimeEventService.chatPinned(chatId, null);
     }
 
     @PostMapping("/{chatId}/members")
@@ -100,9 +146,10 @@ public class ChatController {
             @CurrentUser UUID userId,
             @RequestParam(required = false) UUID after,
             @RequestParam(required = false) UUID before,
+            @RequestParam(required = false) UUID around,
             @RequestParam(required = false) Integer limit
     ) {
-        List<ChatMessageResponse> messages = chatService.getMessages(companyId, chatId, userId, after, before, limit);
+        List<ChatMessageResponse> messages = chatService.getMessages(companyId, chatId, userId, after, before, around, limit);
         chatPresenceTracker.touchChat(userId, chatId);
         return messages;
     }
@@ -129,6 +176,33 @@ public class ChatController {
         return notified(chatService.createFileMessage(companyId, chatId, userId, request));
     }
 
+    /** Изменить сообщение: только автор, не позже 48 часов. */
+    @PatchMapping("/{chatId}/messages/{messageId}")
+    public ChatMessageResponse editMessage(
+            @PathVariable UUID companyId,
+            @PathVariable UUID chatId,
+            @PathVariable UUID messageId,
+            @CurrentUser UUID userId,
+            @Valid @RequestBody EditMessageRequest request
+    ) {
+        ChatMessageResponse message = chatService.editMessage(companyId, chatId, messageId, userId, request);
+        realtimeEventService.messageUpdated(message);
+        return message;
+    }
+
+    /** Какие сообщения чата изменены после since (для обновления экрана при polling). */
+    @GetMapping("/{chatId}/messages/updated")
+    public UpdatedMessagesResponse getUpdatedMessages(
+            @PathVariable UUID companyId,
+            @PathVariable UUID chatId,
+            @CurrentUser UUID userId,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME
+            ) java.time.OffsetDateTime since
+    ) {
+        return chatService.getUpdatedSince(companyId, chatId, userId, since);
+    }
+
     /** Удалить сообщение у всех: автор или директор. */
     @DeleteMapping("/{chatId}/messages/{messageId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
@@ -138,8 +212,12 @@ public class ChatController {
             @PathVariable UUID messageId,
             @CurrentUser UUID userId
     ) {
-        chatMessageActionsService.deleteForEveryone(companyId, chatId, messageId, userId);
+        boolean unpinned = chatMessageActionsService.deleteForEveryone(companyId, chatId, messageId, userId);
         realtimeEventService.messageDeleted(chatId, messageId);
+
+        if (unpinned) {
+            realtimeEventService.chatPinned(chatId, null);
+        }
     }
 
     /** Какие сообщения чата удалены у всех после since (для обновления экрана при polling). */
@@ -153,6 +231,33 @@ public class ChatController {
             ) java.time.OffsetDateTime since
     ) {
         return chatMessageActionsService.getDeletedSince(companyId, chatId, userId, since);
+    }
+
+    /** Поставить реакцию (одна на человека: новая заменяет прежнюю). */
+    @PostMapping("/{chatId}/messages/{messageId}/reactions")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void addReaction(
+            @PathVariable UUID companyId,
+            @PathVariable UUID chatId,
+            @PathVariable UUID messageId,
+            @CurrentUser UUID userId,
+            @Valid @RequestBody AddReactionRequest request
+    ) {
+        realtimeEventService.messageReactions(chatId, messageId,
+                chatMessageActionsService.addReaction(companyId, chatId, messageId, userId, request.emoji()));
+    }
+
+    @DeleteMapping("/{chatId}/messages/{messageId}/reactions/{emoji}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void removeReaction(
+            @PathVariable UUID companyId,
+            @PathVariable UUID chatId,
+            @PathVariable UUID messageId,
+            @PathVariable String emoji,
+            @CurrentUser UUID userId
+    ) {
+        realtimeEventService.messageReactions(chatId, messageId,
+                chatMessageActionsService.removeReaction(companyId, chatId, messageId, userId, emoji));
     }
 
     /** Кто прочитал сообщение. */
@@ -184,9 +289,10 @@ public class ChatController {
             @CurrentUser UUID userId,
             @RequestParam(required = false) UUID after,
             @RequestParam(required = false) UUID before,
+            @RequestParam(required = false) UUID around,
             @RequestParam(required = false) Integer limit
     ) {
-        List<ChatMessageResponse> messages = chatService.getGeneralChatMessages(companyId, userId, after, before, limit);
+        List<ChatMessageResponse> messages = chatService.getGeneralChatMessages(companyId, userId, after, before, around, limit);
         chatPresenceTracker.touchGeneralChat(userId, companyId);
         return messages;
     }
@@ -222,6 +328,7 @@ public class ChatController {
 
     private ChatReadStateResponse readNotified(ChatReadStateResponse state) {
         realtimeEventService.chatRead(state);
+        pushNotificationService.badgeChanged(state.userId());
         return state;
     }
 
