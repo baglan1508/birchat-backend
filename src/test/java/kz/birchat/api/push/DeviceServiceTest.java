@@ -60,6 +60,7 @@ class DeviceServiceTest {
     void userCannotRemoveSomeoneElsesDevice() {
         DeviceTokenEntity other = new DeviceTokenEntity();
         other.setUserId(UUID.randomUUID());
+        when(repository.findByToken("ABCDEF01")).thenReturn(Optional.empty());
         when(repository.findByToken("abcdef01")).thenReturn(Optional.of(other));
 
         service.unregister(userId, "ABCDEF01");
