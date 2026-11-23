@@ -142,6 +142,125 @@ class ChatManagementServiceTest {
         verify(chatMemberRepository, never()).saveAll(anyList());
     }
 
+    @Test
+    void employeeOpensDirectChatWithColleague() {
+        CompanyMemberEntity me = companyMember(employeeId, "EMPLOYEE");
+        CompanyMemberEntity peer = companyMember(directorId, "DIRECTOR");
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(me);
+        when(companyMemberRepository.findByCompanyIdAndUserIdAndStatus(companyId, directorId, "ACTIVE"))
+                .thenReturn(java.util.Optional.of(peer));
+        when(chatRepository.findByCompanyIdAndDirectKey(eq(companyId), anyString()))
+                .thenReturn(java.util.Optional.empty());
+        when(chatRepository.save(any(ChatEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(chatMemberRepository.findMembers(any())).thenReturn(List.of());
+
+        ChatDetailsResponse response = service.openDirectChat(companyId, employeeId, directorId);
+
+        assertEquals("DIRECT", response.type());
+        assertNull(response.name());
+        assertFalse(response.canManage());
+
+        ArgumentCaptor<ChatEntity> chat = ArgumentCaptor.forClass(ChatEntity.class);
+        verify(chatRepository).save(chat.capture());
+        assertEquals(ChatManagementService.directKey(directorId, employeeId), chat.getValue().getDirectKey());
+        assertEquals(ChatManagementService.directKey(employeeId, directorId), chat.getValue().getDirectKey());
+        verify(chatMemberRepository).saveAll(anyList());
+    }
+
+    @Test
+    void existingDirectChatIsReused() {
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(companyMember(employeeId, "EMPLOYEE"));
+        when(companyMemberRepository.findByCompanyIdAndUserIdAndStatus(companyId, directorId, "ACTIVE"))
+                .thenReturn(java.util.Optional.of(companyMember(directorId, "DIRECTOR")));
+        ChatEntity existing = new ChatEntity();
+        existing.setId(UUID.randomUUID());
+        existing.setType("DIRECT");
+        when(chatRepository.findByCompanyIdAndDirectKey(companyId, ChatManagementService.directKey(employeeId, directorId)))
+                .thenReturn(java.util.Optional.of(existing));
+        when(chatMemberRepository.findMembers(existing.getId())).thenReturn(List.of());
+
+        ChatDetailsResponse response = service.openDirectChat(companyId, employeeId, directorId);
+
+        assertEquals(existing.getId(), response.chatId());
+        verify(chatRepository, never()).save(any());
+        verify(chatMemberRepository, never()).saveAll(anyList());
+    }
+
+    @Test
+    void cannotOpenDirectChatWithYourself() {
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(companyMember(employeeId, "EMPLOYEE"));
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> service.openDirectChat(companyId, employeeId, employeeId));
+
+        assertEquals(HttpStatus.BAD_REQUEST, error.getStatus());
+        verifyNoInteractions(chatRepository);
+    }
+
+    @Test
+    void cannotOpenDirectChatWithOutsider() {
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(companyMember(employeeId, "EMPLOYEE"));
+        UUID outsider = UUID.randomUUID();
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> service.openDirectChat(companyId, employeeId, outsider));
+
+        assertEquals(HttpStatus.NOT_FOUND, error.getStatus());
+        assertEquals(ApiErrorCode.USER_NOT_FOUND, error.getCode());
+    }
+
+    @Test
+    void directChatCannotBeRenamed() {
+        ChatEntity direct = new ChatEntity();
+        direct.setId(UUID.randomUUID());
+        direct.setType("DIRECT");
+        when(currentUserService.requireDirector(companyId, directorId)).thenReturn(companyMember(directorId, "DIRECTOR"));
+        when(chatAccessService.requireCompanyChat(companyId, direct.getId())).thenReturn(direct);
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> service.renameChat(companyId, direct.getId(), directorId, "Новое"));
+
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+    }
+
+    @Test
+    void emptyDirectChatIsHiddenFromListAndPeerIsShown() {
+        when(currentUserService.requireActiveMember(companyId, employeeId)).thenReturn(companyMember(employeeId, "EMPLOYEE"));
+
+        ChatEntity empty = new ChatEntity();
+        empty.setId(UUID.randomUUID());
+        empty.setType("DIRECT");
+        ChatEntity active = new ChatEntity();
+        active.setId(UUID.randomUUID());
+        active.setType("DIRECT");
+        when(chatRepository.findAccessibleChats(companyId, employeeId, false)).thenReturn(List.of(empty, active));
+
+        kz.birchat.api.entity.ChatMessageEntity last = new kz.birchat.api.entity.ChatMessageEntity();
+        last.setContent("Привет");
+        last.setCreatedAt(java.time.LocalDateTime.now());
+        when(chatMessageRepository.findLatestGeneralChatMessages(eq(companyId), eq(empty.getId()), any()))
+                .thenReturn(List.of());
+        when(chatMessageRepository.findLatestGeneralChatMessages(eq(companyId), eq(active.getId()), any()))
+                .thenReturn(List.of(last));
+
+        UserEntity peerUser = new UserEntity();
+        peerUser.setId(directorId);
+        peerUser.setFullName("Нурлан Ахметов");
+        peerUser.setDisplayName("Нурлан");
+        peerUser.setInitials("НА");
+        ChatMemberEntity peerMember = new ChatMemberEntity();
+        peerMember.setUser(peerUser);
+        when(chatMemberRepository.findMembers(any())).thenReturn(List.of(peerMember));
+
+        List<kz.birchat.api.dto.ChatSummaryResponse> chats = service.getChats(companyId, employeeId);
+
+        assertEquals(1, chats.size());
+        assertEquals(active.getId(), chats.get(0).chatId());
+        assertNull(chats.get(0).name());
+        assertEquals(directorId, chats.get(0).peer().userId());
+        assertEquals("Нурлан Ахметов", chats.get(0).peer().fullName());
+    }
+
     private CompanyMemberEntity companyMember(UUID userId, String roleCode) {
         CompanyEntity company = new CompanyEntity();
         company.setId(companyId);

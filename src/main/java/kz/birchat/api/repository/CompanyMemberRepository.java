@@ -34,6 +34,9 @@ public interface CompanyMemberRepository extends JpaRepository<CompanyMemberEnti
 
     long countByCompanyIdAndStatus(UUID companyId, String status);
 
+    @EntityGraph(attributePaths = {"user", "role"})
+    List<CompanyMemberEntity> findByCompanyIdAndUserIdIn(UUID companyId, java.util.Collection<UUID> userIds);
+
     /** Участие в компании в любом статусе (пара компания + человек уникальна). */
     @EntityGraph(attributePaths = {"user", "role"})
     Optional<CompanyMemberEntity> findByCompanyIdAndUserId(UUID companyId, UUID userId);

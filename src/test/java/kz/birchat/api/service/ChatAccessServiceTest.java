@@ -8,7 +8,9 @@ import kz.birchat.api.entity.CompanyMemberEntity;
 import kz.birchat.api.entity.RoleEntity;
 import kz.birchat.api.exception.ApiErrorCode;
 import kz.birchat.api.exception.ApiException;
+import kz.birchat.api.repository.ChatAttachmentRepository;
 import kz.birchat.api.repository.ChatMemberRepository;
+import kz.birchat.api.repository.CompanyMemberRepository;
 import kz.birchat.api.repository.ChatRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,6 +36,12 @@ class ChatAccessServiceTest {
 
     @Mock
     private ChatMemberRepository chatMemberRepository;
+
+    @Mock
+    private ChatAttachmentRepository chatAttachmentRepository;
+
+    @Mock
+    private CompanyMemberRepository companyMemberRepository;
 
     @InjectMocks
     private ChatAccessService chatAccessService;
@@ -113,6 +121,49 @@ class ChatAccessServiceTest {
         when(chatMemberRepository.existsByChatIdAndUserId(group.getId(), userId)).thenReturn(false);
 
         assertFalse(chatAccessService.canAccessFile(file, member("EMPLOYEE"), userId));
+    }
+
+    @Test
+    void directorDoesNotSeeOthersDirectChats() {
+        ChatEntity direct = chat("DIRECT", companyId);
+        mockMember("DIRECTOR");
+        when(chatRepository.findById(direct.getId())).thenReturn(Optional.of(direct));
+        when(chatMemberRepository.existsByChatIdAndUserId(direct.getId(), userId)).thenReturn(false);
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> chatAccessService.requireReadableChat(companyId, direct.getId(), userId));
+
+        assertEquals(ApiErrorCode.CHAT_ACCESS_DENIED, error.getCode());
+    }
+
+    @Test
+    void cannotWriteToDirectChatAfterPeerLeftCompany() {
+        ChatEntity direct = chat("DIRECT", companyId);
+        UUID peer = UUID.randomUUID();
+        mockMember("EMPLOYEE");
+        when(chatRepository.findById(direct.getId())).thenReturn(Optional.of(direct));
+        when(chatMemberRepository.existsByChatIdAndUserId(direct.getId(), userId)).thenReturn(true);
+        when(chatMemberRepository.findUserIdsByChatId(direct.getId())).thenReturn(java.util.List.of(userId, peer));
+        when(companyMemberRepository.existsByCompanyIdAndUserIdAndStatus(companyId, peer, "ACTIVE")).thenReturn(false);
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> chatAccessService.requireWritableChat(companyId, direct.getId(), userId));
+
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+        assertEquals(ApiErrorCode.CHAT_ACCESS_DENIED, error.getCode());
+    }
+
+    @Test
+    void forwardedFileIsVisibleInTargetChat() {
+        ChatEntity group = chat("GROUP", companyId);
+        ChatEntity general = chat("GENERAL", companyId);
+        CompanyFileEntity file = new CompanyFileEntity();
+        file.setId(UUID.randomUUID());
+        file.setChat(group);
+        when(chatMemberRepository.existsByChatIdAndUserId(group.getId(), userId)).thenReturn(false);
+        when(chatAttachmentRepository.findChatsByFileId(file.getId())).thenReturn(java.util.List.of(group, general));
+
+        assertTrue(chatAccessService.canAccessFile(file, member("EMPLOYEE"), userId));
     }
 
     private void mockMember(String roleCode) {

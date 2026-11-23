@@ -134,7 +134,10 @@ public class ChatMessageActionsService {
                 && !readUpTo.isBefore(message.getCreatedAt());
     }
 
-    /** Кто сейчас в чате: общий — все активные сотрудники; группа — участники и директор. */
+    /**
+     * Кто сейчас в чате: общий — все активные сотрудники; группа — участники и директор;
+     * личный — двое участников (если ещё в компании).
+     */
     public Set<UUID> recipients(UUID companyId, ChatEntity chat) {
         List<CompanyMemberEntity> active = companyMemberRepository
                 .findByCompanyIdAndStatusOrderByJoinedAtAsc(companyId, "ACTIVE");
@@ -150,7 +153,9 @@ public class ChatMessageActionsService {
         for (CompanyMemberEntity member : active) {
             UUID id = member.getUser().getId();
 
-            if (chatMembers.contains(id) || CurrentUserService.isDirector(member)) {
+            boolean directorSeesGroup = !ChatAccessService.isDirect(chat) && CurrentUserService.isDirector(member);
+
+            if (chatMembers.contains(id) || directorSeesGroup) {
                 result.add(id);
             }
         }

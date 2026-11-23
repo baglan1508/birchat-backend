@@ -27,5 +27,6 @@ public enum ApiErrorCode {
     CHAT_ACCESS_DENIED,
     NOT_FOUND,
     METHOD_NOT_ALLOWED,
-    AI_DISABLED
+    AI_DISABLED,
+    EDIT_EXPIRED
 }

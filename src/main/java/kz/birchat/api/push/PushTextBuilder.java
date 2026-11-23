@@ -17,7 +17,17 @@ public final class PushTextBuilder {
      * @param locale   язык устройства: ru или kk
      */
     public static String body(String authorName, ChatMessageType type, String content, String fileName, String locale) {
-        String author = authorName == null || authorName.isBlank() ? "BirChat" : authorName.trim();
+        return author(authorName) + ": " + text(type, content, fileName, locale);
+    }
+
+    /** Упоминание: «Нурлан упомянул(а) вас: текст» / «Нурлан сізді атап өтті: текст». */
+    public static String mentionBody(String authorName, ChatMessageType type, String content, String fileName, String locale) {
+        String verb = "kk".equals(locale) ? " сізді атап өтті: " : " упомянул(а) вас: ";
+        return author(authorName) + verb + text(type, content, fileName, locale);
+    }
+
+    /** Только текст (до 100 символов) или подпись вложения — для личного чата, где автор в заголовке. */
+    public static String text(ChatMessageType type, String content, String fileName, String locale) {
         String text = stripQuoteLine(content);
 
         if (text.isEmpty()) {
@@ -28,7 +38,11 @@ public final class PushTextBuilder {
             text = text.substring(0, MAX_TEXT_LENGTH).trim() + "…";
         }
 
-        return author + ": " + text;
+        return text;
+    }
+
+    private static String author(String authorName) {
+        return authorName == null || authorName.isBlank() ? "BirChat" : authorName.trim();
     }
 
     /**

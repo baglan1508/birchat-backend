@@ -4,6 +4,7 @@ import kz.birchat.api.auth.CurrentUserService;
 import kz.birchat.api.dto.AddChatMembersRequest;
 import kz.birchat.api.dto.ChatDetailsResponse;
 import kz.birchat.api.dto.ChatMemberResponse;
+import kz.birchat.api.dto.ChatPeerResponse;
 import kz.birchat.api.dto.ChatSummaryResponse;
 import kz.birchat.api.dto.CreateGroupChatRequest;
 import kz.birchat.api.entity.ChatEntity;
@@ -59,7 +60,60 @@ public class ChatManagementService {
         return chatRepository.findAccessibleChats(companyId, userId, director)
                 .stream()
                 .map(chat -> toSummary(companyId, chat, userId))
+                // Личный чат появляется в списке с первым сообщением: его создают в момент открытия.
+                .filter(summary -> !ChatType.DIRECT.name().equals(summary.type()) || summary.lastMessageAt() != null)
                 .toList();
+    }
+
+    /**
+     * Личный чат с коллегой: существующий или новый (на пару людей в компании — один чат).
+     * Написать можно любому сотруднику компании, кроме себя.
+     */
+    @Transactional
+    public ChatDetailsResponse openDirectChat(UUID companyId, UUID userId, UUID peerId) {
+        CompanyMemberEntity me = currentUserService.requireActiveMember(companyId, userId);
+
+        if (peerId == null || peerId.equals(userId)) {
+            throw ApiException.badRequest(ApiErrorCode.VALIDATION, "Нельзя написать самому себе");
+        }
+
+        CompanyMemberEntity peer = companyMemberRepository
+                .findByCompanyIdAndUserIdAndStatus(companyId, peerId, STATUS_ACTIVE)
+                .orElseThrow(() -> ApiException.notFound(
+                        ApiErrorCode.USER_NOT_FOUND,
+                        "Сотрудник не найден в компании"
+                ));
+
+        String key = directKey(userId, peerId);
+
+        ChatEntity chat = chatRepository.findByCompanyIdAndDirectKey(companyId, key)
+                .orElseGet(() -> {
+                    LocalDateTime now = TimeUtils.utcNow();
+
+                    ChatEntity created = new ChatEntity();
+                    created.setId(UUID.randomUUID());
+                    created.setCompany(me.getCompany());
+                    created.setName(null);
+                    created.setType(ChatType.DIRECT.name());
+                    created.setDirectKey(key);
+                    created.setCreatedBy(me.getUser());
+                    created.setCreatedAt(now);
+
+                    ChatEntity saved = chatRepository.save(created);
+                    chatMemberRepository.saveAll(List.of(
+                            newMember(saved, me.getUser(), me.getUser(), now),
+                            newMember(saved, peer.getUser(), me.getUser(), now)
+                    ));
+                    return saved;
+                });
+
+        return toDetails(companyId, chat, false);
+    }
+
+    static String directKey(UUID first, UUID second) {
+        String a = first.toString();
+        String b = second.toString();
+        return a.compareTo(b) < 0 ? a + ":" + b : b + ":" + a;
     }
 
     @Transactional(readOnly = true)
@@ -187,6 +241,13 @@ public class ChatManagementService {
     private ChatEntity requireGroupChat(UUID companyId, UUID chatId, String messageForGeneralChat) {
         ChatEntity chat = chatAccessService.requireCompanyChat(companyId, chatId);
 
+        if (ChatAccessService.isDirect(chat)) {
+            throw ApiException.forbidden(
+                    ApiErrorCode.FORBIDDEN,
+                    "Личный чат нельзя переименовать и менять в нём участников"
+            );
+        }
+
         if (!ChatAccessService.isGroup(chat)) {
             throw ApiException.badRequest(ApiErrorCode.VALIDATION, messageForGeneralChat);
         }
@@ -243,13 +304,36 @@ public class ChatManagementService {
         return new ChatSummaryResponse(
                 chat.getId(),
                 chat.getType(),
-                chat.getName(),
+                ChatAccessService.isDirect(chat) ? null : chat.getName(),
                 membersCount,
                 chatService.unreadCount(companyId, chat.getId(), userId),
                 lastMessage == null ? null : lastMessage.getContent(),
                 lastMessage == null ? null : TimeUtils.toUtcOffset(lastMessage.getCreatedAt()),
-                TimeUtils.toUtcOffset(chat.getCreatedAt())
+                TimeUtils.toUtcOffset(chat.getCreatedAt()),
+                ChatAccessService.isDirect(chat) ? peer(companyId, chat, userId) : null
         );
+    }
+
+    /** Собеседник в личном чате — как его видят коллеги. */
+    private ChatPeerResponse peer(UUID companyId, ChatEntity chat, UUID userId) {
+        return chatMemberRepository.findMembers(chat.getId()).stream()
+                .map(ChatMemberEntity::getUser)
+                .filter(user -> !user.getId().equals(userId))
+                .findFirst()
+                .map(user -> {
+                    CompanyMemberEntity membership = companyMemberRepository
+                            .findByCompanyIdAndUserId(companyId, user.getId())
+                            .orElse(null);
+                    MemberProfile profile = MemberProfile.of(user, membership);
+                    return new ChatPeerResponse(
+                            user.getId(),
+                            profile.fullName(),
+                            profile.displayName(),
+                            profile.initials(),
+                            profile.avatarUrl()
+                    );
+                })
+                .orElse(null);
     }
 
     private ChatDetailsResponse toDetails(UUID companyId, ChatEntity chat, boolean director) {
@@ -274,7 +358,7 @@ public class ChatManagementService {
         return new ChatDetailsResponse(
                 chat.getId(),
                 chat.getType(),
-                chat.getName(),
+                ChatAccessService.isDirect(chat) ? null : chat.getName(),
                 chat.getCreatedBy() == null ? null : chat.getCreatedBy().getId(),
                 TimeUtils.toUtcOffset(chat.getCreatedAt()),
                 director && ChatAccessService.isGroup(chat),

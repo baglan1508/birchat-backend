@@ -137,7 +137,8 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
     );
     /**
      * Полнотекстовый поиск по сообщениям доступных пользователю чатов (индекс из V16):
-     * общий чат и группы, где он участник; директор ищет по всем чатам компании.
+     * общий чат, группы и личные чаты, где он участник; директор ищет по всем группам компании
+     * (чужие личные чаты ему не видны).
      *
      * Запрос нормализуется той же функцией birchat.search_text, что и текст сообщений,
      * и разбирается с русской морфологией («договоры» находит «договора», «договором»).
@@ -163,7 +164,7 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
           )
           AND (
                 ch.type = 'GENERAL'
-                OR :director = true
+                OR (:director = true AND ch.type = 'GROUP')
                 OR EXISTS (
                     SELECT 1 FROM birchat.chat_members cm
                     WHERE cm.chat_id = ch.id
@@ -242,6 +243,22 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
         ORDER BY m.deletedAt ASC
         """)
     List<UUID> findDeletedIdsSince(
+            @Param("chatId") UUID chatId,
+            @Param("since") LocalDateTime since,
+            Pageable pageable
+    );
+
+    /** Сообщения чата, изменённые после since (кроме удалённых), по времени изменения. */
+    @Query("""
+        SELECT m FROM ChatMessageEntity m
+        JOIN FETCH m.user u
+        JOIN FETCH m.chat ch
+        WHERE m.chat.id = :chatId
+          AND m.editedAt > :since
+          AND m.isDeleted = false
+        ORDER BY m.editedAt ASC
+        """)
+    List<ChatMessageEntity> findEditedSince(
             @Param("chatId") UUID chatId,
             @Param("since") LocalDateTime since,
             Pageable pageable
