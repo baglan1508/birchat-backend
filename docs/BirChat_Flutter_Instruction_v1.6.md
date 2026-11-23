@@ -24,6 +24,15 @@
 | 3 | Ответ и пересылка полями | выпуск 19 |
 | 4 | Редактирование | выпуск 19 |
 | 6 | Упоминания `@` | выпуск 19 |
+| 7 | Реакции | выпуск 20 |
+| 8 | Закреплённое сообщение | выпуск 20 |
+| 9 | Поиск и файлы по одному чату | выпуск 20 |
+| 10 | Длительность голосового | выпуск 20 |
+| 11 | Страница вокруг сообщения | выпуск 20 |
+| 12 | Удаление группы | выпуск 20 |
+| 13 | Группы создаёт не только директор | выпуск 20 |
+| 14 | AI видит и группы | выпуск 20 |
+| 15 | Тихий push с бейджем | выпуск 20 |
 
 ---
 
@@ -181,4 +190,93 @@ GET …/chats/{chatId}/messages/updated?since={checkedAt}
 * В ответе `mentions: [{ userId, fullName }]`.
 * Упомянутому push приходит **даже если чат у него открыт**: «Нурлан упомянул(а) вас: …» / «Нурлан сізді атап өтті: …» — по языку устройства. Остальным — обычный.
 * Лента «Меня упомянули» — позже, данные для неё уже хранятся.
+
+---
+
+## 7. Реакции
+
+```http
+POST   …/chats/{chatId}/messages/{messageId}/reactions   { "emoji": "👍" }   → 204
+DELETE …/chats/{chatId}/messages/{messageId}/reactions/{emoji}              → 204
+```
+
+* Набор: 👍 ❤️ 😂 😮 😢 🙏; другое — `400 VALIDATION`. Одна реакция человека на сообщение: новая заменяет прежнюю. `DELETE` чужой или несуществующей реакции — тоже `204`. Эмодзи в пути кодируйте (`Uri.encodeComponent`).
+* В `ChatMessageResponse`: `reactions: [{ "emoji": "👍", "count": 3, "mine": true }]`.
+* WebSocket: `{ "type": "message.reactions", "companyId", "chatId", "messageId", "reactions": [{ "emoji", "count", "userIds": [] }] }` — без `mine`, сравнивайте `userIds` со своим id. В остальных событиях `mine` всегда `false`.
+* Без пушей, без отражения в `lastMessage`.
+
+## 8. Закреплённое сообщение
+
+```http
+POST   …/chats/{chatId}/pin   { "messageId": "…" }   → 204
+DELETE …/chats/{chatId}/pin                          → 204
+```
+
+* Одно на чат. Общий чат — директор, группа — директор или создатель (`canManage`), личный — любой из двоих; иначе `403 FORBIDDEN`.
+* `pinnedMessage` (`ChatMessageResponse` или `null`) — в `ChatDetailsResponse` (`GET /chats/{chatId}`) и в `generalChat` у `GET /companies/{id}/home`.
+* WebSocket: `{ "type": "chat.pinned", "companyId", "chatId", "message": { … } | null }`.
+* Закреплённое удалили у всех — закреп снимается (придёт `chat.pinned` с `null`).
+
+## 9. Поиск и файлы по одному чату
+
+```http
+GET /api/companies/{companyId}/search?query=…&limit=50&chatId={chatId|general}&type={all|messages|files}
+GET /api/companies/{companyId}/files?limit=50&chatId={chatId|general}&kind={documents|media|voice}&before={fileId}
+```
+
+* Все новые параметры необязательные. `chatId=general` — сообщения общего чата и файлы компании без группы. Чужая группа — `403 CHAT_ACCESS_DENIED`.
+* `kind`: `media` — `image/*` и `video/*`, `voice` — `audio/*`, `documents` — остальное.
+* `before` — следующая страница: файлы старше этого файла (передавайте `id` последнего файла из предыдущей страницы).
+* Файлы, у которых все сообщения удалены у всех, больше не показываются.
+
+## 10. Длительность голосового
+
+* `POST /files/upload-url`: необязательное `durationMs` (целое, мс).
+* Возвращается в `ChatAttachmentResponse` (вложения сообщений) и `CompanyFileResponse` (`durationMs`, у старых файлов `null`). Длительность в имени файла больше не нужна.
+
+## 11. Страница истории вокруг сообщения
+
+```http
+GET …/chats/{chatId}/messages?around={messageId}&limit=50
+```
+
+`limit/2` сообщений до, само сообщение и остальные после — по возрастанию времени, как обычная страница. Дальше — обычные `before` / `after`. Вместе с `after` или `before` — `400 VALIDATION`. Работает и на `/chats/general/messages`.
+
+## 12. Удаление группы
+
+```http
+DELETE /api/companies/{companyId}/chats/{chatId}   → 204
+```
+
+* Только `canManage` (директор или создатель), только `GROUP`: общий чат — `400 VALIDATION`, личный — `403 FORBIDDEN`.
+* Группа пропадает у всех из списка, поиска, файлов и AI. Открытый чат отвечает `403 CHAT_ACCESS_DENIED` (уже обрабатывается).
+* WebSocket всем, кто был в группе: `{ "type": "chat.deleted", "companyId", "chatId" }`.
+
+## 13. Группы создаёт не только директор
+
+* `PUT /api/companies/{companyId}` `{ "membersCanCreateGroups": true }` — только директор. Поле `membersCanCreateGroups` в `CompanyResponse`.
+* Если включено — `POST /chats` доступен всем (иначе сотруднику `403 FORBIDDEN`). Создатель получает `canManage` для своей группы: переименовать, добавить и убрать участников, удалить, закрепить. Директор управляет любой группой.
+
+## 14. AI видит и группы
+
+* `/ai/ask`: у сотрудника — общий чат и группы, где он состоит; у директора — общий чат и все группы. **Личные чаты в AI не попадают ни у кого** (в т.ч. у сотрудника — его собственные: там сообщения второго человека).
+* `GET /ai/director/summary/today` — новое поле:
+
+```json
+{
+  "title": "Сводка за сегодня", "summary": "…", "items": ["…"], "createdAt": "…",
+  "sections": [
+    { "chatId": "…", "name": "Общий чат", "summary": "…" },
+    { "chatId": "…", "name": "Склад Актобе", "summary": "…" }
+  ]
+}
+```
+
+  `sections` — только чаты, где за день были сообщения; у сводок, сделанных до выпуска, — пустой список.
+* Всё — только при `aiEnabled` (0.3).
+
+## 15. Тихий push с бейджем после прочтения
+
+* После `POST …/read` сервер отправляет на устройства пользователя пуш только с `badge`, если общее число непрочитанных изменилось. Ничего не показывается и не звучит, цифра на иконке обновляется.
+* `content-available` в нём нет: Apple не разрешает фоновый пуш с `badge`. Если приложению нужно обновлять данные в фоне — скажите, сделаем отдельным пушем.
 
