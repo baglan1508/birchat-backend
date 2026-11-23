@@ -73,4 +73,28 @@ class DeviceServiceTest {
 
         assertDoesNotThrow(() -> service.unregister(userId, "abcdef01"));
     }
+
+    @Test
+    void androidTokenIsKeptAsIsAndEnvironmentIsProduction() {
+        when(repository.findByToken("fcm:Token_AbC-1")).thenReturn(Optional.empty());
+
+        service.register(userId, new RegisterDeviceRequest("android", "fcm:Token_AbC-1", null, "ru"));
+
+        org.mockito.ArgumentCaptor<DeviceTokenEntity> saved = org.mockito.ArgumentCaptor.forClass(DeviceTokenEntity.class);
+        verify(repository).save(saved.capture());
+        assertEquals("fcm:Token_AbC-1", saved.getValue().getToken());
+        assertEquals("ANDROID", saved.getValue().getPlatform());
+        assertEquals("production", saved.getValue().getEnvironment());
+    }
+
+    @Test
+    void iosNeedsEnvironmentAndHexToken() {
+        kz.birchat.api.exception.ApiException noEnvironment = assertThrows(kz.birchat.api.exception.ApiException.class,
+                () -> service.register(userId, new RegisterDeviceRequest("IOS", "abcdef01", null, null)));
+        assertEquals(kz.birchat.api.exception.ApiErrorCode.VALIDATION, noEnvironment.getCode());
+
+        assertThrows(kz.birchat.api.exception.ApiException.class,
+                () -> service.register(userId, new RegisterDeviceRequest("IOS", "not-hex", "production", null)));
+        verify(repository, never()).save(any());
+    }
 }
