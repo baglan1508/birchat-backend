@@ -98,4 +98,25 @@ class DeviceServiceTest {
                 () -> service.register(userId, new RegisterDeviceRequest("IOS", "not-hex", "production", null)));
         verify(repository, never()).save(any());
     }
+
+    @Test
+    void xcodeEnvironmentNameAndForeignLocaleAreAccepted() {
+        when(repository.findByToken("abcdef02")).thenReturn(Optional.empty());
+
+        service.register(userId, new RegisterDeviceRequest("IOS", "ABCDEF02", "development", "en_US"));
+
+        org.mockito.ArgumentCaptor<DeviceTokenEntity> saved = org.mockito.ArgumentCaptor.forClass(DeviceTokenEntity.class);
+        verify(repository).save(saved.capture());
+        assertEquals("sandbox", saved.getValue().getEnvironment());
+        assertEquals("ru", saved.getValue().getLocale());
+    }
+
+    @Test
+    void environmentAndLocaleNormalisation() {
+        assertEquals("production", DeviceService.normalizeEnvironment("Production"));
+        assertEquals("sandbox", DeviceService.normalizeEnvironment("development"));
+        assertNull(DeviceService.normalizeEnvironment("staging"));
+        assertEquals("kk", DeviceService.normalizeLocale("kk-KZ"));
+        assertEquals("ru", DeviceService.normalizeLocale(null));
+    }
 }

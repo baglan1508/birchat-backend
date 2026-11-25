@@ -6,7 +6,8 @@ import jakarta.validation.constraints.Size;
 
 /**
  * platform — IOS (токен APNs, hex) или ANDROID (токен FCM).
- * environment — для IOS: production (TestFlight, App Store) или sandbox (Xcode); для ANDROID не нужен.
+ * environment — для IOS: production (TestFlight, App Store) или sandbox (Xcode; можно development);
+ * для ANDROID не нужен.
  */
 public record RegisterDeviceRequest(
         @NotBlank(message = "platform обязателен")
@@ -17,10 +18,10 @@ public record RegisterDeviceRequest(
         @Size(max = 512, message = "token слишком длинный")
         String token,
 
-        @Pattern(regexp = "production|sandbox", message = "environment: production или sandbox")
+        /* production / sandbox; принимаются и названия из entitlements: development = sandbox. */
         String environment,
 
-        @Pattern(regexp = "ru|kk", message = "locale: ru или kk")
+        /* ru или kk; любой другой язык (en, ru_KZ, kk-KZ…) приводится к ru или kk. */
         String locale
 ) {
 }
