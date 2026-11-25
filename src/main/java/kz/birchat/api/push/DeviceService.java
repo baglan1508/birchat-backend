@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 import java.util.Locale;
 import java.util.UUID;
 
+@lombok.extern.slf4j.Slf4j
 @Service
 @RequiredArgsConstructor
 public class DeviceService {
@@ -25,10 +26,19 @@ public class DeviceService {
     public void register(UUID userId, RegisterDeviceRequest request) {
         String platform = request.platform().toUpperCase(Locale.ROOT);
         boolean android = PLATFORM_ANDROID.equals(platform);
-        String token = normalizeToken(platform, request.token());
-        String environment = android ? "production" : request.environment();
+        String token;
 
-        if (environment == null || environment.isBlank()) {
+        try {
+            token = normalizeToken(platform, request.token());
+        } catch (ApiException ex) {
+            log.warn("Device registration rejected. userId={} platform={} reason={}", userId, platform, ex.getMessage());
+            throw ex;
+        }
+
+        String environment = android ? "production" : normalizeEnvironment(request.environment());
+
+        if (environment == null) {
+            log.warn("Device registration rejected. userId={} platform={} environment={}", userId, platform, request.environment());
             throw ApiException.badRequest(ApiErrorCode.VALIDATION, "environment обязателен для IOS: production или sandbox");
         }
 
@@ -45,10 +55,35 @@ public class DeviceService {
         device.setUserId(userId);
         device.setPlatform(platform);
         device.setEnvironment(environment);
-        device.setLocale(request.locale() == null ? "ru" : request.locale());
+        device.setLocale(normalizeLocale(request.locale()));
         device.setUpdatedAt(now);
 
+        boolean isNew = device.getCreatedAt() == now;
         deviceTokenRepository.save(device);
+
+        log.info("Device registered. userId={} platform={} environment={} locale={} token=…{} new={}",
+                userId, platform, environment, device.getLocale(),
+                token.length() > 8 ? token.substring(token.length() - 8) : token, isNew);
+    }
+
+    /** production / sandbox; development (так называется окружение в entitlements Xcode) = sandbox. */
+    static String normalizeEnvironment(String environment) {
+        if (environment == null || environment.isBlank()) {
+            return null;
+        }
+
+        String value = environment.trim().toLowerCase(Locale.ROOT);
+
+        return switch (value) {
+            case "production", "prod", "release" -> "production";
+            case "sandbox", "development", "dev", "debug" -> "sandbox";
+            default -> null;
+        };
+    }
+
+    /** kk, kk-KZ, kk_KZ → kk; всё остальное (ru, en, пусто) → ru. */
+    static String normalizeLocale(String locale) {
+        return locale != null && locale.trim().toLowerCase(Locale.ROOT).startsWith("kk") ? "kk" : "ru";
     }
 
     public static final String PLATFORM_IOS = "IOS";

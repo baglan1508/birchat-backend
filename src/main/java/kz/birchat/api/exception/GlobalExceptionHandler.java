@@ -65,6 +65,9 @@ public class GlobalExceptionHandler {
                 .map(error -> error.getField() + ": " + error.getDefaultMessage())
                 .collect(Collectors.joining("; "));
 
+        // Отклонённые запросы приложения видны в логах (поля и причина, без значений).
+        log.warn("Validation failed on {} {}: {}", request.getMethod(), request.getRequestURI(), message);
+
         ErrorResponse response = new ErrorResponse(
                 TimeUtils.utcOffsetNow(),
                 HttpStatus.BAD_REQUEST.value(),
