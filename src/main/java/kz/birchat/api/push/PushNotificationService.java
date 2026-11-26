@@ -67,11 +67,26 @@ public class PushNotificationService {
     );
 
     /** platform — IOS (payloadJson для APNs) или ANDROID (payloadJson — объект «message» FCM без token). */
-    record Outgoing(String deviceToken, String environment, String payloadJson, String platform) {
+    record Outgoing(String deviceToken, String environment, String payloadJson, String platform, UUID userId) {
 
         Outgoing(String deviceToken, String environment, String payloadJson) {
-            this(deviceToken, environment, payloadJson, DeviceService.PLATFORM_IOS);
+            this(deviceToken, environment, payloadJson, DeviceService.PLATFORM_IOS, null);
         }
+
+        Outgoing(String deviceToken, String environment, String payloadJson, String platform) {
+            this(deviceToken, environment, payloadJson, platform, null);
+        }
+
+        /** Для лога: «user 73466b10 …04806d28 production». */
+        String label() {
+            String user = userId == null ? "?" : userId.toString().substring(0, 8);
+            String token = deviceToken.length() > 8 ? deviceToken.substring(deviceToken.length() - 8) : deviceToken;
+            return "user " + user + " …" + token + " " + environment;
+        }
+    }
+
+    private static String shortId(UUID id) {
+        return id.toString().substring(0, 8);
     }
 
     /** Последний бейдж, отправленный пользователю, — чтобы не слать тихий пуш с той же цифрой. */
@@ -144,17 +159,17 @@ public class PushNotificationService {
         return lastBadge.put(userId, badge);
     }
 
-    private PushSender.Result send(Outgoing notification) {
+    private PushSender.Delivery send(Outgoing notification) {
         if (DeviceService.PLATFORM_ANDROID.equals(notification.platform())) {
             try {
-                return fcmClient.send(notification.deviceToken(), objectMapper.readTree(notification.payloadJson()));
+                return fcmClient.deliver(notification.deviceToken(), objectMapper.readTree(notification.payloadJson()));
             } catch (Exception ex) {
                 log.warn("FCM payload error: {}", ex.toString());
-                return PushSender.Result.FAILED;
+                return new PushSender.Delivery(PushSender.Result.FAILED, 0, ex.getMessage());
             }
         }
 
-        return pushSender.send(notification.deviceToken(), notification.environment(), notification.payloadJson());
+        return pushSender.deliver(notification.deviceToken(), notification.environment(), notification.payloadJson());
     }
 
     private boolean canSend(DeviceTokenEntity device) {
@@ -193,8 +208,13 @@ public class PushNotificationService {
         int failed = 0;
 
         // Отправка — вне транзакции: соединение с базой не занято, пока отвечает Apple.
+        List<String> results = new ArrayList<>();
+
         for (Outgoing notification : notifications) {
-            PushSender.Result result = send(notification);
+            PushSender.Delivery delivery = send(notification);
+            PushSender.Result result = delivery == null ? PushSender.Result.FAILED : delivery.result();
+            results.add(notification.label() + "=" + result
+                    + (delivery == null || delivery.reason() == null ? "" : "(" + delivery.reason() + ")"));
 
             if (result == PushSender.Result.SENT) {
                 sent++;
@@ -206,8 +226,8 @@ public class PushNotificationService {
         }
 
         // Одна строка на сообщение: видно, что пуши уходят, а не только ошибки.
-        log.info("Push sent. messageId={} devices={} sent={} invalid={} failed={}",
-                messageId, notifications.size(), sent, invalidTokens.size(), failed);
+        log.info("Push sent. messageId={} devices={} sent={} invalid={} failed={} results={}",
+                messageId, notifications.size(), sent, invalidTokens.size(), failed, results);
 
         if (!invalidTokens.isEmpty()) {
             new TransactionTemplate(transactionManager).executeWithoutResult(status ->
@@ -243,14 +263,32 @@ public class PushNotificationService {
                 .forEach(mention -> mentioned.add(mention.getUser().getId()));
         mentioned.retainAll(recipients);
 
-        recipients.removeIf(userId -> !mentioned.contains(userId)
-                && presenceTracker.isInChat(userId, chat.getId(), general ? companyId : null));
+        // Кого пропускаем, потому что чат у него открыт, — с давностью последней отметки (для лога).
+        List<String> inChat = new ArrayList<>();
+        recipients.removeIf(userId -> {
+            if (mentioned.contains(userId)) {
+                return false;
+            }
 
-        if (recipients.isEmpty()) {
-            return List.of();
-        }
+            Long seconds = presenceTracker.secondsSinceSeen(userId, chat.getId(), general ? companyId : null);
 
-        List<DeviceTokenEntity> devices = deviceTokenRepository.findByUserIdIn(recipients);
+            if (seconds != null) {
+                inChat.add(shortId(userId) + ":" + seconds + "s");
+                return true;
+            }
+
+            return false;
+        });
+
+        List<DeviceTokenEntity> devices = recipients.isEmpty() ? List.of() : deviceTokenRepository.findByUserIdIn(recipients);
+        Set<UUID> withDevices = new HashSet<>();
+        devices.forEach(device -> withDevices.add(device.getUserId()));
+        List<String> noDevice = recipients.stream().filter(id -> !withDevices.contains(id)).map(PushNotificationService::shortId).toList();
+
+        // Одна строка на сообщение: кому шлём, кого пропустили и почему.
+        log.info("Push plan. messageId={} chat={} author={} send={} skippedInChat={} noDevice={}",
+                messageId, shortId(chat.getId()), shortId(authorId),
+                withDevices.stream().map(PushNotificationService::shortId).toList(), inChat, noDevice);
 
         if (devices.isEmpty()) {
             return List.of();
@@ -300,7 +338,8 @@ public class PushNotificationService {
                         device.getToken(),
                         device.getEnvironment(),
                         toJson(androidMessage(androidTitle, body, companyId, chat.getId(), messageId)),
-                        DeviceService.PLATFORM_ANDROID
+                        DeviceService.PLATFORM_ANDROID,
+                        device.getUserId()
                 ));
                 continue;
             }
@@ -308,7 +347,9 @@ public class PushNotificationService {
             result.add(new Outgoing(
                     device.getToken(),
                     device.getEnvironment(),
-                    toJson(payload(title, subtitle, body, badge, companyId, chat.getId(), messageId))
+                    toJson(payload(title, subtitle, body, badge, companyId, chat.getId(), messageId)),
+                    DeviceService.PLATFORM_IOS,
+                    device.getUserId()
             ));
         }
 

@@ -35,6 +35,11 @@ public class RealtimeSessionRegistry {
         });
     }
 
+    public boolean hasSessions(UUID userId) {
+        Set<WebSocketSession> userSessions = sessions.get(userId);
+        return userSessions != null && !userSessions.isEmpty();
+    }
+
     public boolean isEmpty() {
         return sessions.isEmpty();
     }

@@ -33,6 +33,31 @@ public class ChatPresenceTracker {
         touch(userId + ":general:" + companyId, Instant.now());
     }
 
+    /**
+     * Пользователь ушёл из чата (viewing с chatId null) или закрыл все соединения:
+     * пуши снова идут сразу, не дожидаясь 15 секунд.
+     */
+    public void leave(UUID userId) {
+        String prefix = userId + ":";
+        lastSeen.keySet().removeIf(key -> key.startsWith(prefix));
+    }
+
+    /** Сколько секунд назад пользователь отметился в чате (для лога); null — не отмечался или давно. */
+    public Long secondsSinceSeen(UUID userId, UUID chatId, UUID companyIdIfGeneral) {
+        Instant now = Instant.now();
+        Instant seen = lastSeen.get(userId + ":" + chatId);
+
+        if (companyIdIfGeneral != null) {
+            Instant general = lastSeen.get(userId + ":general:" + companyIdIfGeneral);
+
+            if (general != null && (seen == null || general.isAfter(seen))) {
+                seen = general;
+            }
+        }
+
+        return isFresh(seen, now) ? Duration.between(seen, now).getSeconds() : null;
+    }
+
     public boolean isInChat(UUID userId, UUID chatId, UUID companyIdIfGeneral) {
         return isInChat(userId, chatId, companyIdIfGeneral, Instant.now());
     }

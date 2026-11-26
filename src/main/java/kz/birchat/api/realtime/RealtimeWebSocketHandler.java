@@ -35,6 +35,7 @@ import java.util.concurrent.TimeUnit;
  *   {"type":"auth","accessToken":"…"}   — первым сообщением, в течение 10 секунд;
  *   {"type":"viewing","chatId":"…"}     — раз в ~10 секунд, пока чат открыт (чтобы не слать push);
  *   {"type":"viewing","chatId":"general","companyId":"…"} — то же для общего чата без его id;
+ *   {"type":"viewing","chatId":null}    — ушёл из чата: пуши снова сразу;
  *   {"type":"ping"}                     — по желанию, ответ {"type":"pong"}.
  *
  * сервер → клиент:
@@ -112,7 +113,16 @@ public class RealtimeWebSocketHandler extends TextWebSocketHandler {
 
         switch (type) {
             case "ping" -> send(session, Map.of("type", "pong"));
-            case "viewing" -> viewing(userId, json.path("chatId").asText(""), json.path("companyId").asText(""));
+            case "viewing" -> {
+                com.fasterxml.jackson.databind.JsonNode chatId = json.path("chatId");
+
+                if (chatId.isMissingNode() || chatId.isNull() || chatId.asText("").isBlank()) {
+                    // {"type":"viewing","chatId":null} — ушёл из чата: пуши сразу, без ожидания 15 секунд.
+                    presenceTracker.leave(userId);
+                } else {
+                    viewing(userId, chatId.asText(""), json.path("companyId").asText(""));
+                }
+            }
             default -> send(session, Map.of("type", "error", "message", "Неизвестный type: " + type));
         }
     }
@@ -178,6 +188,11 @@ public class RealtimeWebSocketHandler extends TextWebSocketHandler {
 
         if (userId != null) {
             registry.remove(userId, session);
+
+            // Последнее соединение закрыто (приложение свернули) — чат больше не считается открытым.
+            if (!registry.hasSessions(userId)) {
+                presenceTracker.leave(userId);
+            }
         }
     }
 
