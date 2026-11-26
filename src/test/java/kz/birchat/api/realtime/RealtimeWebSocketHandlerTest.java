@@ -102,6 +102,29 @@ class RealtimeWebSocketHandlerTest {
     }
 
     @Test
+    void viewingNullLeavesChatAtOnce() throws Exception {
+        authenticate();
+        UUID chatId = UUID.randomUUID();
+
+        handler.handleMessage(session, new TextMessage("{\"type\":\"viewing\",\"chatId\":\"" + chatId + "\"}"));
+        assertTrue(presenceTracker.isInChat(userId, chatId, null));
+
+        handler.handleMessage(session, new TextMessage("{\"type\":\"viewing\",\"chatId\":null}"));
+        assertFalse(presenceTracker.isInChat(userId, chatId, null));
+    }
+
+    @Test
+    void closingLastConnectionLeavesChat() throws Exception {
+        authenticate();
+        UUID chatId = UUID.randomUUID();
+        handler.handleMessage(session, new TextMessage("{\"type\":\"viewing\",\"chatId\":\"" + chatId + "\"}"));
+
+        handler.afterConnectionClosed(session, org.springframework.web.socket.CloseStatus.NORMAL);
+
+        assertFalse(presenceTracker.isInChat(userId, chatId, null));
+    }
+
+    @Test
     void closedConnectionIsForgotten() throws Exception {
         authenticate();
 

@@ -37,4 +37,24 @@ class ChatPresenceTrackerTest {
         assertTrue(tracker.isInChat(user, chat, company, now));
         assertFalse(tracker.isInChat(user, chat, null, now)); // группа той же компании — не считается
     }
+
+    @Test
+    void leaveForgetsAllChatsOfUserOnly() {
+        ChatPresenceTracker tracker = new ChatPresenceTracker();
+        java.util.UUID me = java.util.UUID.randomUUID();
+        java.util.UUID other = java.util.UUID.randomUUID();
+        java.util.UUID chat = java.util.UUID.randomUUID();
+        java.util.UUID company = java.util.UUID.randomUUID();
+        tracker.touchChat(me, chat);
+        tracker.touchGeneralChat(me, company);
+        tracker.touchChat(other, chat);
+
+        org.junit.jupiter.api.Assertions.assertEquals(0L, tracker.secondsSinceSeen(me, chat, null));
+
+        tracker.leave(me);
+
+        org.junit.jupiter.api.Assertions.assertFalse(tracker.isInChat(me, chat, company));
+        org.junit.jupiter.api.Assertions.assertNull(tracker.secondsSinceSeen(me, chat, company));
+        org.junit.jupiter.api.Assertions.assertTrue(tracker.isInChat(other, chat, null));
+    }
 }
